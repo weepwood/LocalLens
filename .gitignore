@@ -1,0 +1,26 @@
+# Go
+server/bin/
+server/data/
+server/config.json
+*.exe
+*.test
+*.out
+
+# Flutter / Dart
+apps/local_lens/.dart_tool/
+apps/local_lens/.flutter-plugins
+apps/local_lens/.flutter-plugins-dependencies
+apps/local_lens/.packages
+apps/local_lens/build/
+apps/local_lens/android/
+apps/local_lens/ios/
+apps/local_lens/linux/
+apps/local_lens/macos/
+apps/local_lens/web/
+apps/local_lens/windows/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
