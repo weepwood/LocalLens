@@ -36,7 +36,6 @@ Authorization: Bearer <token>
 
 - `type=image|video`
 - `q=<文件名关键字>`
-- `libraryId=<library-id>`
 - `limit=1..200`
 - `offset>=0`
 
@@ -47,10 +46,10 @@ Authorization: Bearer <token>
   "items": [
     {
       "id": "...",
+      "libraryId": "main-media",
       "fileName": "IMG_0001.jpg",
       "type": "image",
-      "width": 4032,
-      "height": 3024,
+      "mimeType": "image/jpeg",
       "sizeBytes": 4231421,
       "modifiedAt": "2026-07-18T10:00:00Z",
       "thumbnailUrl": "/api/v1/media/.../thumbnail?width=480",
@@ -63,6 +62,8 @@ Authorization: Bearer <token>
   "offset": 0
 }
 ```
+
+MVP 暂未提取图片宽高、EXIF 和视频时长；这些字段将在 FFprobe/元数据阶段加入。
 
 ## 文件内容
 
