@@ -24,8 +24,11 @@ void main() {
         .widgetList<TextFormField>(find.byType(TextFormField))
         .toList(growable: false);
 
-    expect(find.text('修改服务器连接'), findsOneWidget);
-    expect(find.text('更新服务器地址'), findsOneWidget);
+    expect(find.text('更新服务器连接'), findsOneWidget);
+    expect(
+      find.text('服务器 IP 变化时只需更新地址，现有 Token 会继续保留。'),
+      findsOneWidget,
+    );
     expect(fields, hasLength(2));
     expect(fields[0].controller?.text, 'http://192.168.1.20:9527');
     expect(fields[1].controller?.text, 'existing-token-1234567890');
