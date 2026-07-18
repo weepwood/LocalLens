@@ -29,8 +29,8 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.mod
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Resolve module graph
+        run: go mod tidy
 
       - name: Run tests and capture output
         id: tests
@@ -44,12 +44,15 @@ jobs:
           "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           exit $exitCode
 
-      - name: Upload complete test log
+      - name: Upload module files and test log
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: server-test-log
-          path: server/server-test.log
+          name: server-module-diagnostics
+          path: |
+            server/go.mod
+            server/go.sum
+            server/server-test.log
           if-no-files-found: error
           retention-days: 7
 
