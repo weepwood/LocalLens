@@ -63,11 +63,12 @@ type ScanStatus struct {
 }
 
 type App struct {
-	cfg    Config
-	db     *sql.DB
-	logger *slog.Logger
-	mu     sync.RWMutex
-	scan   ScanStatus
+	cfg         Config
+	db          *sql.DB
+	logger      *slog.Logger
+	mu          sync.RWMutex
+	scan        ScanStatus
+	thumbnailMu sync.Mutex
 }
 
 func newApp(cfg Config, db *sql.DB, logger *slog.Logger) *App {
