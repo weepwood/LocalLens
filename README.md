@@ -28,6 +28,19 @@ LocalLens/
 └── docs/                   # 架构与 API 文档
 ```
 
+## 下载打包产物
+
+GitHub Actions 自动生成：
+
+- `LocalLens-Server-Windows-x64.zip`：Windows Go 媒体服务端；
+- `LocalLens-Client-Windows-x64.zip`：Windows Flutter 客户端；
+- `LocalLens-Android-universal.apk`：Android 测试安装包；
+- `SHA256SUMS.txt`：Release 下载文件完整性校验。
+
+正式版本可从 [GitHub Releases](https://github.com/weepwood/LocalLens/releases) 下载。Pull Request 与普通主分支提交产生的临时构建，可以在对应 GitHub Actions 运行页面的 Artifacts 区域下载。
+
+打包、版本标签和 Android 签名说明见 [docs/releasing.md](docs/releasing.md)。
+
 ## 1. 启动 Go 服务端
 
 环境建议：Go 1.23 或更高版本；Windows 生产环境建议使用当前受支持的 Go 版本。
@@ -147,4 +160,4 @@ Authorization: Bearer <api_token>
 5. Windows 托盘管理端与 Windows Service。
 6. HTTPS 证书指纹固定与远程安全接入。
 
-详见 [docs/architecture.md](docs/architecture.md) 与 [docs/api.md](docs/api.md)。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/api.md](docs/api.md) 与 [docs/releasing.md](docs/releasing.md)。
