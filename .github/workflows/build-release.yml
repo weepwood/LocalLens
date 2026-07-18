@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.2.0"
+        description: "Release tag, for example v0.2.1"
         required: true
-        default: "v0.2.0"
+        default: "v0.2.1"
         type: string
 
 permissions:
@@ -63,7 +63,7 @@ jobs:
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-          $version = "0.2.0-dev"
+          $version = "0.2.1-dev"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -137,7 +137,7 @@ jobs:
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
-          $version = "0.2.0"
+          $version = "0.2.1"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -229,7 +229,7 @@ jobs:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="0.2.0"
+          VERSION="0.2.1"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
@@ -295,7 +295,7 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.2.0"
+            TAG="v0.2.1"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then

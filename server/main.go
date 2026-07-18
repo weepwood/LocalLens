@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.2.0"
+var version = "0.2.1"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -37,6 +37,12 @@ func main() {
 		logger.Error("sync libraries", "error", err)
 		os.Exit(1)
 	}
+	// Mark the initial maintenance scan as running before workers start. Workers
+	// then pause their write claims until the scan transaction has completed,
+	// avoiding predictable SQLITE_BUSY warnings during startup.
+	if cfg.AutoScan {
+		app.startScan()
+	}
 	if err := app.startBackgroundWorkers(); err != nil {
 		logger.Error("start background workers", "error", err)
 		os.Exit(1)
@@ -51,9 +57,6 @@ func main() {
 				logger.Warn("start filesystem watcher", "error", watcherErr)
 			}
 		}
-	}
-	if cfg.AutoScan {
-		app.startScan()
 	}
 
 	server := &http.Server{
