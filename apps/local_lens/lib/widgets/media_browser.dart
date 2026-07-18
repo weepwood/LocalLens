@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import '../models/media_item.dart';
-import '../services/api_client.dart';
 import '../screens/image_viewer_screen.dart';
 import '../screens/video_viewer_screen.dart';
+import '../services/api_client.dart';
+import 'app_components.dart';
 import 'media_manage_sheet.dart';
 import 'media_tile.dart';
 
@@ -54,6 +57,7 @@ class MediaBrowserState extends State<MediaBrowser> {
   final _favoritePending = <String>{};
   bool _loading = true;
   bool _loadingMore = false;
+  bool _compactGrid = false;
   Object? _error;
   int _total = 0;
   String? _nextCursor;
@@ -169,7 +173,7 @@ class MediaBrowserState extends State<MediaBrowser> {
       return Column(
         children: [
           if (widget.header != null) widget.header!,
-          const Expanded(child: Center(child: CircularProgressIndicator())),
+          const Expanded(child: _MediaSkeleton()),
         ],
       );
     }
@@ -178,7 +182,16 @@ class MediaBrowserState extends State<MediaBrowser> {
         children: [
           if (widget.header != null) widget.header!,
           Expanded(
-            child: _ErrorState(error: _error, onRetry: refresh),
+            child: AppEmptyState(
+              icon: LucideIcons.cloudOff,
+              title: '无法加载媒体库',
+              description: _readableError(_error),
+              action: FilledButton.icon(
+                onPressed: refresh,
+                icon: const Icon(LucideIcons.refreshCw, size: 18),
+                label: const Text('重新加载'),
+              ),
+            ),
           ),
         ],
       );
@@ -191,25 +204,67 @@ class MediaBrowserState extends State<MediaBrowser> {
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           if (widget.header != null) SliverToBoxAdapter(child: widget.header),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Text(
-                '已加载 ${_items.length} / $_total',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ),
+          SliverToBoxAdapter(child: _buildOverview()),
           if (_items.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(child: Text(widget.emptyLabel)),
+              child: AppEmptyState(
+                title: widget.emptyLabel,
+                description: '尝试切换媒体库、清空筛选条件，或在服务器页面重新扫描。',
+                icon: LucideIcons.images,
+                action: OutlinedButton.icon(
+                  onPressed: refresh,
+                  icon: const Icon(LucideIcons.refreshCw, size: 17),
+                  label: const Text('刷新'),
+                ),
+              ),
             )
           else if (widget.groupByDate)
             ..._buildDateSections()
           else
             _buildGrid(_items),
           SliverToBoxAdapter(child: _buildFooter()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverview() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 10),
+      child: Row(
+        children: [
+          Text(
+            '$_total 项媒体',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '已加载 ${_items.length}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+          const Spacer(),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
+                value: false,
+                icon: Icon(LucideIcons.layoutGrid, size: 17),
+                tooltip: '舒适网格',
+              ),
+              ButtonSegment(
+                value: true,
+                icon: Icon(LucideIcons.grid, size: 17),
+                tooltip: '紧凑网格',
+              ),
+            ],
+            selected: {_compactGrid},
+            showSelectedIcon: false,
+            onSelectionChanged: (value) {
+              setState(() => _compactGrid = value.first);
+            },
+          ),
         ],
       ),
     );
@@ -224,18 +279,24 @@ class MediaBrowserState extends State<MediaBrowser> {
       for (final entry in groups.entries) ...[
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+            padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
             child: Row(
               children: [
-                Text(
-                  entry.key,
-                  style: Theme.of(context).textTheme.titleMedium,
+                Text(entry.key, style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${entry.value.length} 项',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  '${entry.value.length} 项',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                const SizedBox(width: 12),
+                Expanded(child: Divider(color: Theme.of(context).dividerColor)),
               ],
             ),
           ),
@@ -247,17 +308,18 @@ class MediaBrowserState extends State<MediaBrowser> {
 
   Widget _buildGrid(List<MediaItem> items) {
     return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      padding: const EdgeInsets.fromLTRB(20, 2, 20, 14),
       sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 230,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: _compactGrid ? 168 : 224,
+          crossAxisSpacing: _compactGrid ? 5 : 8,
+          mainAxisSpacing: _compactGrid ? 5 : 8,
           childAspectRatio: 1,
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) => _tile(items[index]),
           childCount: items.length,
+          addRepaintBoundaries: true,
         ),
       ),
     );
@@ -284,35 +346,41 @@ class MediaBrowserState extends State<MediaBrowser> {
   Widget _buildFooter() {
     if (_loadingMore) {
       return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
+        padding: EdgeInsets.fromLTRB(24, 12, 24, 32),
+        child: Column(
+          children: [
+            LinearProgressIndicator(minHeight: 3),
+            SizedBox(height: 10),
+            Text('正在加载更多媒体…'),
+          ],
+        ),
       );
     }
     if (_error != null && _items.isNotEmpty) {
       return Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 30),
         child: Center(
           child: OutlinedButton.icon(
             onPressed: _loadMore,
-            icon: const Icon(Icons.refresh),
-            label: Text('加载更多失败：$_error'),
+            icon: const Icon(LucideIcons.refreshCw, size: 17),
+            label: const Text('加载更多失败，点击重试'),
           ),
         ),
       );
     }
     if (_hasMore) {
       return Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 30),
         child: Center(
           child: OutlinedButton.icon(
             onPressed: _loadMore,
-            icon: const Icon(Icons.expand_more),
+            icon: const Icon(LucideIcons.chevronDown, size: 17),
             label: const Text('加载更多'),
           ),
         ),
       );
     }
-    return const SizedBox(height: 24);
+    return const SizedBox(height: 28);
   }
 
   Future<void> _toggleFavorite(MediaItem item) async {
@@ -366,35 +434,45 @@ class MediaBrowserState extends State<MediaBrowser> {
 
   void _showError(Object error) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error.toString())),
+      SnackBar(content: Text(_readableError(error))),
     );
   }
 }
 
-class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.error, required this.onRetry});
-
-  final Object? error;
-  final VoidCallback onRetry;
+class _MediaSkeleton extends StatelessWidget {
+  const _MediaSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_outlined, size: 56),
-            const SizedBox(height: 12),
-            Text(error.toString(), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试'),
+    return Skeletonizer(
+      enabled: true,
+      child: GridView.builder(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 224,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+        ),
+        itemCount: 24,
+        itemBuilder: (context, index) => Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Container(
+                width: 90,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -419,3 +497,9 @@ String _querySignature(MediaBrowser widget) => [
       widget.minRating,
       widget.sort,
     ].join('|');
+
+String _readableError(Object? error) {
+  final value = error?.toString().trim() ?? '未知错误';
+  if (value.length <= 220) return value;
+  return '${value.substring(0, 220)}…';
+}

@@ -22,7 +22,7 @@ class ApiClient {
   ApiClient(this.settings) {
     _client.connectionTimeout = const Duration(seconds: 8);
     _client.idleTimeout = const Duration(seconds: 30);
-    _client.userAgent = 'LocalLens Flutter Client/0.2';
+    _client.userAgent = 'LocalLens Flutter Client/0.3';
   }
 
   static const _requestTimeout = Duration(seconds: 25);
