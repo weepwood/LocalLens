@@ -3,18 +3,38 @@ import 'package:local_lens/models/server_state.dart';
 
 void main() {
   group('LibraryInfo', () {
-    test('parses an empty last scan timestamp as null', () {
+    test('parses counts and an empty last scan timestamp', () {
       final library = LibraryInfo.fromJson(<String, dynamic>{
         'id': 'main',
         'name': '媒体库',
         'recursive': true,
         'enabled': true,
+        'mediaCount': 1250,
         'lastScannedAt': '',
       });
 
       expect(library.id, 'main');
       expect(library.lastScannedAt, isNull);
       expect(library.recursive, isTrue);
+      expect(library.mediaCount, 1250);
+    });
+  });
+
+  group('MediaStats', () {
+    test('parses server aggregate values', () {
+      final stats = MediaStats.fromJson(<String, dynamic>{
+        'total': 10,
+        'images': 7,
+        'videos': 3,
+        'favorites': 2,
+        'sizeBytes': 4096,
+      });
+
+      expect(stats.total, 10);
+      expect(stats.images, 7);
+      expect(stats.videos, 3);
+      expect(stats.favorites, 2);
+      expect(stats.sizeBytes, 4096);
     });
   });
 

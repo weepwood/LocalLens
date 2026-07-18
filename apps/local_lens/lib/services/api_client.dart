@@ -13,9 +13,8 @@ class ApiException implements Exception {
   final int? statusCode;
 
   @override
-  String toString() => statusCode == null
-      ? message
-      : 'HTTP $statusCode: $message';
+  String toString() =>
+      statusCode == null ? message : 'HTTP $statusCode: $message';
 }
 
 class ApiClient {
@@ -61,6 +60,11 @@ class ApiClient {
         .toList(growable: false);
   }
 
+  Future<MediaStats> getStats() async {
+    final json = await _requestJson('GET', '/api/v1/stats');
+    return MediaStats.fromJson(json);
+  }
+
   Future<ScanStatus> getScanStatus() async {
     final json = await _requestJson('GET', '/api/v1/scan');
     return ScanStatus.fromJson(json);
@@ -74,19 +78,34 @@ class ApiClient {
   Future<MediaPage> listMedia({
     String? type,
     String? search,
+    String? libraryId,
+    bool favorite = false,
     int limit = 100,
     int offset = 0,
+    String? cursor,
   }) async {
     final query = <String, String>{
       'limit': '$limit',
-      'offset': '$offset',
+      if (cursor == null || cursor.isEmpty) 'offset': '$offset',
+      if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
       if (type != null && type.isNotEmpty) 'type': type,
       if (search != null && search.trim().isNotEmpty) 'q': search.trim(),
+      if (libraryId != null && libraryId.isNotEmpty) 'libraryId': libraryId,
+      if (favorite) 'favorite': 'true',
     };
     final uri = Uri.parse('${settings.normalizedBaseUrl}/api/v1/media')
         .replace(queryParameters: query);
     final json = await _requestJson('GET', uri.toString());
     return MediaPage.fromJson(json);
+  }
+
+  Future<MediaItem> setFavorite(String mediaId, bool favorite) async {
+    final method = favorite ? 'PUT' : 'DELETE';
+    final json = await _requestJson(
+      method,
+      '/api/v1/media/$mediaId/favorite',
+    );
+    return MediaItem.fromJson(json);
   }
 
   Future<Map<String, dynamic>> _requestJson(

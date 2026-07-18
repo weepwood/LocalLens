@@ -4,6 +4,7 @@ class LibraryInfo {
     required this.name,
     required this.recursive,
     required this.enabled,
+    required this.mediaCount,
     this.lastScannedAt,
   });
 
@@ -13,6 +14,7 @@ class LibraryInfo {
       name: json['name'] as String,
       recursive: json['recursive'] as bool? ?? true,
       enabled: json['enabled'] as bool? ?? true,
+      mediaCount: (json['mediaCount'] as num? ?? 0).toInt(),
       lastScannedAt: _parseDate(json['lastScannedAt']),
     );
   }
@@ -21,7 +23,34 @@ class LibraryInfo {
   final String name;
   final bool recursive;
   final bool enabled;
+  final int mediaCount;
   final DateTime? lastScannedAt;
+}
+
+class MediaStats {
+  const MediaStats({
+    required this.total,
+    required this.images,
+    required this.videos,
+    required this.favorites,
+    required this.sizeBytes,
+  });
+
+  factory MediaStats.fromJson(Map<String, dynamic> json) {
+    return MediaStats(
+      total: (json['total'] as num? ?? 0).toInt(),
+      images: (json['images'] as num? ?? 0).toInt(),
+      videos: (json['videos'] as num? ?? 0).toInt(),
+      favorites: (json['favorites'] as num? ?? 0).toInt(),
+      sizeBytes: (json['sizeBytes'] as num? ?? 0).toInt(),
+    );
+  }
+
+  final int total;
+  final int images;
+  final int videos;
+  final int favorites;
+  final int sizeBytes;
 }
 
 class ScanStatus {
