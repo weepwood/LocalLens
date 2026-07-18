@@ -1,6 +1,8 @@
 name: UI Diagnostics
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: ["feat/ui-refresh-v0.3"]
   workflow_dispatch:
