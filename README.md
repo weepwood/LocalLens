@@ -2,7 +2,7 @@
 
 LocalLens 是一个本地优先的跨平台媒体库：Windows 上运行 Go 媒体服务，Flutter 客户端通过局域网访问图片与视频。
 
-> 当前状态：可运行 MVP。已包含媒体目录扫描、SQLite 索引、图片缩略图、视频 Range 流、Bearer Token 鉴权，以及 Flutter 分页媒体网格、搜索、扫描进度、图片查看和视频播放界面。
+> 当前状态：可运行 MVP。已包含媒体目录扫描、SQLite 版本迁移、游标分页、媒体库筛选、收藏、统计、图片缩略图、视频 Range 流、Bearer Token 鉴权，以及 Flutter Windows / Android 浏览客户端。
 
 ## 架构
 
@@ -11,8 +11,10 @@ Windows 文件夹
     ↓
 Go Media Server
 ├── 增量扫描
-├── SQLite 索引
-├── 图片缩略图缓存
+├── SQLite 索引与迁移
+├── 游标分页与媒体库过滤
+├── 收藏与媒体统计
+├── 缩略图缓存
 ├── 视频 HTTP Range
 └── Token 鉴权
     ↓ 局域网
@@ -24,6 +26,13 @@ Flutter Android / iOS / Windows
 ```text
 LocalLens/
 ├── server/                 # Go 媒体服务端
+│   ├── main.go             # 进程启动与关闭
+│   ├── config.go           # 配置读取与校验
+│   ├── database.go         # SQLite 与版本迁移
+│   ├── scanner.go          # 文件扫描
+│   ├── media_store.go      # 查询、游标与收藏
+│   ├── http_api.go         # REST API 与媒体流
+│   └── util.go             # 通用工具
 ├── apps/local_lens/        # Flutter 客户端源码
 └── docs/                   # 架构、API、发布和项目分析文档
 ```
@@ -84,7 +93,7 @@ go run . -config ./config.json
 Invoke-RestMethod http://127.0.0.1:9527/api/v1/health
 ```
 
-首次启动会扫描配置中的媒体目录。视频缩略图需要把 `ffmpeg.exe` 放到 `server/bin/`；没有 FFmpeg 时，图片浏览和视频播放仍可工作，但视频封面会返回错误占位。
+首次启动会自动建立或升级 SQLite 数据库，不需要手工删除旧索引。视频缩略图需要把 `ffmpeg.exe` 放到 `server/bin/`；没有 FFmpeg 时，图片浏览和视频原文件播放仍可工作。
 
 ### Windows 防火墙
 
@@ -126,12 +135,13 @@ flutter run -d <device-id>
 
 ## 客户端浏览能力
 
-- 每页 100 条增量加载，滚动接近底部自动继续加载；
-- 显示已加载数量与服务器媒体总数；
-- 图片、视频类型筛选；
-- 文件名搜索防抖，避免连续输入触发大量请求；
-- 下拉刷新媒体、媒体库和扫描状态；
-- 客户端启动扫描并轮询显示发现数、索引数、失败数和当前目录；
+- 使用 `(modified_at, id)` 游标连续加载大媒体库；
+- 支持按媒体库、图片、视频和收藏进行组合筛选；
+- 文件名搜索防抖；
+- 展示图片数、视频数、收藏数、总容量和各媒体库文件数量；
+- 可直接收藏或取消收藏，收藏数据不修改原始媒体文件；
+- 下拉刷新媒体、统计、媒体库和扫描状态；
+- 客户端启动扫描并轮询展示发现数、索引数、失败数和当前目录；
 - 媒体卡片显示文件大小、修改日期和缩略图加载进度；
 - 网络超时、TLS、HTTP 和数据解析错误提供明确提示。
 
@@ -140,8 +150,11 @@ flutter run -d <device-id>
 - `GET /api/v1/health`
 - `GET /api/v1/server`
 - `GET /api/v1/libraries`
+- `GET /api/v1/stats`
 - `GET /api/v1/media`
 - `GET /api/v1/media/{id}`
+- `PUT /api/v1/media/{id}/favorite`
+- `DELETE /api/v1/media/{id}/favorite`
 - `GET /api/v1/media/{id}/thumbnail`
 - `GET /api/v1/media/{id}/original`
 - `GET /api/v1/media/{id}/stream`
@@ -156,21 +169,20 @@ Authorization: Bearer <api_token>
 
 ## 当前限制
 
-- MVP 暂时使用手动输入地址和 Token，尚未实现二维码配对。
+- 仍使用手动输入地址和统一 Token，尚未实现二维码配对和每设备令牌。
 - 视频默认直接播放原文件，客户端不支持的编码尚未自动转码。
-- 视频元数据和封面依赖 FFmpeg/FFprobe 的后续完善。
-- 服务端仍使用 `LIMIT/OFFSET` 分页，尚未实现游标分页和媒体库过滤。
-- 缩略图请求会同步调用 FFmpeg，尚未改为后台任务队列。
+- 图片 EXIF、视频时长、分辨率和编码信息尚未提取。
+- 文件变化监听与缩略图后台任务队列尚未完成；当前版本通过互斥和临时文件避免并发生成同一缩略图。
 - 暂不提供真实文件删除、移动和重命名接口。
 - 目前使用 HTTP 便于局域网调试；正式远程访问前需要增加 TLS 或通过可信 VPN 接入。
 
 ## 路线图
 
-1. 拆分 Go 单文件服务并引入数据库迁移版本。
-2. 实现媒体库过滤、游标分页和文件变化监听。
-3. 缩略图后台任务队列、FFprobe 元数据和 HLS 按需转码。
-4. 时间线、收藏、相册、标签和播放进度。
-5. 二维码配对、设备令牌与撤销。
+1. 文件变化监听与缩略图后台任务队列。
+2. FFprobe 元数据、时间线和播放进度。
+3. 相册、标签、评分与重复媒体检测。
+4. 二维码配对、设备令牌与撤销。
+5. HLS 按需转码与转码缓存。
 6. Windows 托盘管理端、Windows Service 和 HTTPS 证书指纹固定。
 
 详见 [docs/architecture.md](docs/architecture.md)、[docs/api.md](docs/api.md)、[docs/releasing.md](docs/releasing.md) 与 [docs/project-analysis.md](docs/project-analysis.md)。
