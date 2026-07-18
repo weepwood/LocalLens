@@ -15,6 +15,7 @@ class RootScreen extends StatefulWidget {
 class _RootScreenState extends State<RootScreen> {
   final SettingsStore _store = SettingsStore();
   late Future<ServerSettings?> _settingsFuture;
+  bool _editingConnection = false;
 
   @override
   void initState() {
@@ -33,11 +34,16 @@ class _RootScreenState extends State<RootScreen> {
           );
         }
         final settings = snapshot.data;
-        if (settings == null) {
-          return SetupScreen(onSaved: _saveSettings);
+        if (settings == null || _editingConnection) {
+          return SetupScreen(
+            initialSettings: settings,
+            onSaved: _saveSettings,
+            onCancel: settings == null ? null : _cancelEditing,
+          );
         }
         return LibraryScreen(
           settings: settings,
+          onEditConnection: _editConnection,
           onDisconnect: _disconnect,
         );
       },
@@ -47,12 +53,26 @@ class _RootScreenState extends State<RootScreen> {
   Future<void> _saveSettings(ServerSettings settings) async {
     await _store.save(settings);
     if (!mounted) return;
-    setState(() => _settingsFuture = Future.value(settings));
+    setState(() {
+      _editingConnection = false;
+      _settingsFuture = Future.value(settings);
+    });
+  }
+
+  void _editConnection() {
+    setState(() => _editingConnection = true);
+  }
+
+  void _cancelEditing() {
+    setState(() => _editingConnection = false);
   }
 
   Future<void> _disconnect() async {
     await _store.clear();
     if (!mounted) return;
-    setState(() => _settingsFuture = Future<ServerSettings?>.value());
+    setState(() {
+      _editingConnection = false;
+      _settingsFuture = Future<ServerSettings?>.value();
+    });
   }
 }

@@ -10,11 +10,13 @@ import 'timeline_screen.dart';
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({
     required this.settings,
+    required this.onEditConnection,
     required this.onDisconnect,
     super.key,
   });
 
   final ServerSettings settings;
+  final VoidCallback onEditConnection;
   final Future<void> Function() onDisconnect;
 
   @override
@@ -66,6 +68,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           )
                         : const Icon(Icons.photo_library_rounded, size: 30),
                   ),
+                  trailing: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: extended
+                        ? OutlinedButton.icon(
+                            onPressed: widget.onEditConnection,
+                            icon: const Icon(Icons.settings_ethernet_rounded),
+                            label: const Text('连接设置'),
+                          )
+                        : IconButton(
+                            tooltip: '修改服务器地址',
+                            onPressed: widget.onEditConnection,
+                            icon: const Icon(Icons.settings_ethernet_rounded),
+                          ),
+                  ),
                   destinations: const [
                     NavigationRailDestination(
                       icon: Icon(Icons.timeline_outlined),
@@ -101,6 +117,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
           appBar: AppBar(
             title: Text(_titles[_index]),
             leading: const Icon(Icons.photo_library_rounded),
+            actions: [
+              IconButton(
+                tooltip: '修改服务器地址',
+                onPressed: widget.onEditConnection,
+                icon: const Icon(Icons.settings_ethernet_rounded),
+              ),
+            ],
           ),
           body: IndexedStack(index: _index, children: _pages),
           bottomNavigationBar: NavigationBar(
