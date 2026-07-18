@@ -8,6 +8,8 @@ class MediaTile extends StatelessWidget {
     required this.imageUrl,
     required this.headers,
     required this.onTap,
+    required this.onFavoriteToggle,
+    this.favoritePending = false,
     super.key,
   });
 
@@ -15,11 +17,14 @@ class MediaTile extends StatelessWidget {
   final String imageUrl;
   final Map<String, String> headers;
   final VoidCallback onTap;
+  final VoidCallback onFavoriteToggle;
+  final bool favoritePending;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: '${item.fileName}\n${_formatBytes(item.sizeBytes)} · ${_formatDate(item.modifiedAt)}',
+      message:
+          '${item.fileName}\n${_formatBytes(item.sizeBytes)} · ${_formatDate(item.modifiedAt)}',
       child: Material(
         clipBehavior: Clip.antiAlias,
         borderRadius: BorderRadius.circular(12),
@@ -61,6 +66,35 @@ class MediaTile extends StatelessWidget {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Material(
+                  color: Colors.black.withValues(alpha: 0.68),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: item.favorite ? '取消收藏' : '收藏',
+                    onPressed: favoritePending ? null : onFavoriteToggle,
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 19,
+                    color: Colors.white,
+                    disabledColor: Colors.white54,
+                    icon: favoritePending
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            item.favorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                          ),
                   ),
                 ),
               ),
