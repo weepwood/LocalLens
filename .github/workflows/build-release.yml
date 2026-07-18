@@ -12,7 +12,7 @@ on:
       release_tag:
         description: "Release tag, for example v0.2.0"
         required: true
-        default: "v0.1.0"
+        default: "v0.2.0"
         type: string
 
 permissions:
@@ -41,35 +41,51 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
-          cache-dependency-path: server/go.mod
+          cache-dependency-path: |
+            server/go.mod
+            server/go.sum
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Resolve and download dependencies
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Test server
         run: go test ./...
 
       - name: Build and package server
         shell: pwsh
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = "Stop"
           $packageName = "LocalLens-Server-Windows-x64"
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-          go build -trimpath -ldflags "-s -w" -o (Join-Path $packageDir "LocalLensServer.exe") .
+          $version = "0.2.0-dev"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
+            $version = $env:MANUAL_TAG.TrimStart("v")
+          }
+
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o (Join-Path $packageDir "LocalLensServer.exe") .
           Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
+          New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "bin") | Out-Null
 
           @"
-          LocalLens Server
-          =================
+          LocalLens Server $version
+          ==========================
 
           1. Copy config.example.json to config.json.
-          2. Edit the media library paths and api_token.
-          3. Start LocalLensServer.exe -config .\config.json.
-          4. Allow TCP port 9527 only on the Windows Private network profile.
+          2. Edit media library paths, public_url and api_token.
+          3. Put ffmpeg.exe and ffprobe.exe in .\bin\.
+          4. Start LocalLensServer.exe -config .\config.json.
+          5. Allow TCP port 9527 only on the Windows Private network profile.
 
-          FFmpeg is not bundled. Put ffmpeg.exe in .\bin\ffmpeg.exe when video thumbnails are required.
+          The server automatically migrates existing v0.1 databases, watches enabled
+          folders, and resumes pending metadata and thumbnail jobs after restart.
           "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
@@ -117,7 +133,17 @@ jobs:
         run: flutter analyze
 
       - name: Build Windows client
-        run: flutter build windows --release
+        shell: pwsh
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          $version = "0.2.0"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
+            $version = $env:MANUAL_TAG.TrimStart("v")
+          }
+          flutter build windows --release --build-name $version --build-number $env:GITHUB_RUN_NUMBER
 
       - name: Package Windows client
         shell: pwsh
@@ -176,15 +202,16 @@ jobs:
 
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           text = manifest.read_text(encoding="utf-8")
-
-          permission = '<uses-permission android:name="android.permission.INTERNET" />'
-          if permission not in text:
-              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-              text = text.replace(marker, marker + "\n    " + permission, 1)
-
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          permissions = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.CAMERA" />',
+          ]
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace(marker, marker + "\n    " + permission, 1)
           if 'android:usesCleartextTraffic="true"' not in text:
               text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-
           manifest.write_text(text, encoding="utf-8")
           PY
 
@@ -202,7 +229,7 @@ jobs:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="0.1.0"
+          VERSION="0.2.0"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
@@ -268,7 +295,7 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.1.0"
+            TAG="v0.2.0"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then

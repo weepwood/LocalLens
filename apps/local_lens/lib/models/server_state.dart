@@ -34,6 +34,8 @@ class MediaStats {
     required this.videos,
     required this.favorites,
     required this.sizeBytes,
+    required this.metadataPending,
+    required this.thumbnailsPending,
   });
 
   factory MediaStats.fromJson(Map<String, dynamic> json) {
@@ -43,6 +45,8 @@ class MediaStats {
       videos: (json['videos'] as num? ?? 0).toInt(),
       favorites: (json['favorites'] as num? ?? 0).toInt(),
       sizeBytes: (json['sizeBytes'] as num? ?? 0).toInt(),
+      metadataPending: (json['metadataPending'] as num? ?? 0).toInt(),
+      thumbnailsPending: (json['thumbnailsPending'] as num? ?? 0).toInt(),
     );
   }
 
@@ -51,6 +55,8 @@ class MediaStats {
   final int videos;
   final int favorites;
   final int sizeBytes;
+  final int metadataPending;
+  final int thumbnailsPending;
 }
 
 class ScanStatus {

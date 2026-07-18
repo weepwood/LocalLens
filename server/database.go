@@ -26,8 +26,8 @@ func openDB(dataDir string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
 
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	migrations := []migration{
 		{version: 1, apply: migrateBaseSchema},
 		{version: 2, apply: migrateFavorites},
+		{version: 3, apply: migrateMediaMetadata},
+		{version: 4, apply: migrateFolders},
+		{version: 5, apply: migrateJobs},
+		{version: 6, apply: migrateDevicesAndPlayback},
+		{version: 7, apply: migrateCollections},
+		{version: 8, apply: migrateV02Indexes},
 	}
 
 	for _, item := range migrations {
@@ -117,11 +123,183 @@ CREATE INDEX IF NOT EXISTS idx_media_library
 }
 
 func migrateFavorites(tx *sql.Tx) error {
-	rows, err := tx.Query(`PRAGMA table_info(media_items)`)
+	if err := addColumnIfMissing(tx, "media_items", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_favorite_modified ON media_items(favorite, modified_at DESC, id DESC)`)
+	return err
+}
+
+func migrateMediaMetadata(tx *sql.Tx) error {
+	columns := []struct {
+		name string
+		def  string
+	}{
+		{"folder_path", "TEXT NOT NULL DEFAULT ''"},
+		{"captured_at", "TEXT"},
+		{"captured_at_source", "TEXT NOT NULL DEFAULT 'modified'"},
+		{"width", "INTEGER NOT NULL DEFAULT 0"},
+		{"height", "INTEGER NOT NULL DEFAULT 0"},
+		{"duration_ms", "INTEGER NOT NULL DEFAULT 0"},
+		{"codec", "TEXT NOT NULL DEFAULT ''"},
+		{"latitude", "REAL"},
+		{"longitude", "REAL"},
+		{"camera_model", "TEXT NOT NULL DEFAULT ''"},
+		{"metadata_status", "TEXT NOT NULL DEFAULT 'pending'"},
+		{"metadata_error", "TEXT NOT NULL DEFAULT ''"},
+		{"rating", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range columns {
+		if err := addColumnIfMissing(tx, "media_items", column.name, column.def); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(`
+UPDATE media_items
+SET captured_at=modified_at,
+    captured_at_source='modified'
+WHERE captured_at IS NULL OR captured_at='';
+CREATE INDEX IF NOT EXISTS idx_media_captured
+  ON media_items(captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_folder
+  ON media_items(library_id, folder_path, captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_rating
+  ON media_items(rating, captured_at DESC, id DESC);
+`)
+	return err
+}
+
+func migrateFolders(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS folders (
+  id TEXT PRIMARY KEY,
+  library_id TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  relative_path TEXT NOT NULL,
+  parent_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  missing INTEGER NOT NULL DEFAULT 0,
+  last_seen_scan TEXT NOT NULL,
+  UNIQUE(library_id, relative_path)
+);
+CREATE INDEX IF NOT EXISTS idx_folders_parent
+  ON folders(library_id, parent_path, name);
+`)
+	return err
+}
+
+func migrateJobs(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS thumbnail_jobs (
+  media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  width INTEGER NOT NULL,
+  source_modified_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(media_id, width)
+);
+CREATE INDEX IF NOT EXISTS idx_thumbnail_jobs_status
+  ON thumbnail_jobs(status, updated_at);
+CREATE TABLE IF NOT EXISTS metadata_jobs (
+  media_id TEXT PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
+  source_modified_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_metadata_jobs_status
+  ON metadata_jobs(status, updated_at);
+UPDATE thumbnail_jobs SET status='pending' WHERE status='running';
+UPDATE metadata_jobs SET status='pending' WHERE status='running';
+`)
+	return err
+}
+
+func migrateDevicesAndPlayback(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_devices_token
+  ON devices(token_hash, revoked_at);
+CREATE TABLE IF NOT EXISTS playback_progress (
+  device_id TEXT NOT NULL,
+  media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  position_ms INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(device_id, media_id)
+);
+CREATE INDEX IF NOT EXISTS idx_playback_updated
+  ON playback_progress(device_id, updated_at DESC);
+`)
+	return err
+}
+
+func migrateCollections(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS albums (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS album_items (
+  album_id TEXT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+  media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(album_id, media_id)
+);
+CREATE INDEX IF NOT EXISTS idx_album_items_media ON album_items(media_id);
+CREATE TABLE IF NOT EXISTS tags (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  color TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS media_tags (
+  media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(media_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_media_tags_tag ON media_tags(tag_id, media_id);
+`)
+	return err
+}
+
+func migrateV02Indexes(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE INDEX IF NOT EXISTS idx_media_library_captured
+  ON media_items(library_id, captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_missing_captured
+  ON media_items(missing, captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_media_metadata_status
+  ON media_items(metadata_status, modified_at);
+`)
+	return err
+}
+
+func addColumnIfMissing(tx *sql.Tx, table, column, definition string) error {
+	rows, err := tx.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
 		return err
 	}
-	hasFavorite := false
+	found := false
 	for rows.Next() {
 		var cid int
 		var name, columnType string
@@ -131,19 +309,17 @@ func migrateFavorites(tx *sql.Tx) error {
 			_ = rows.Close()
 			return err
 		}
-		if name == "favorite" {
-			hasFavorite = true
+		if name == column {
+			found = true
 		}
 	}
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	if !hasFavorite {
-		if _, err := tx.Exec(`ALTER TABLE media_items ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return err
-		}
+	if found {
+		return nil
 	}
-	_, err = tx.Exec(`CREATE INDEX IF NOT EXISTS idx_media_favorite_modified ON media_items(favorite, modified_at DESC, id DESC)`)
+	_, err = tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
 	return err
 }
 

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.2.0-dev"
+var version = "0.2.0"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -36,6 +36,21 @@ func main() {
 	if err := app.syncLibraries(context.Background()); err != nil {
 		logger.Error("sync libraries", "error", err)
 		os.Exit(1)
+	}
+	if err := app.startBackgroundWorkers(); err != nil {
+		logger.Error("start background workers", "error", err)
+		os.Exit(1)
+	}
+	if cfg.WatchFiles {
+		watcher, watcherErr := newFileWatcher(app)
+		if watcherErr != nil {
+			logger.Warn("create filesystem watcher", "error", watcherErr)
+		} else {
+			app.watcher = watcher
+			if watcherErr := watcher.Start(); watcherErr != nil {
+				logger.Warn("start filesystem watcher", "error", watcherErr)
+			}
+		}
 	}
 	if cfg.AutoScan {
 		app.startScan()
@@ -61,6 +76,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Warn("shutdown", "error", err)
+		logger.Warn("shutdown HTTP server", "error", err)
 	}
+	app.stopBackgroundServices()
 }

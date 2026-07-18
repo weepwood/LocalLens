@@ -1,7 +1,7 @@
 name: local_lens
 description: LocalLens Flutter client for the LocalLens Go media server.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ">=3.7.0 <4.0.0"
@@ -12,6 +12,7 @@ dependencies:
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
+  mobile_scanner: ^7.3.0
   shared_preferences: ^2.5.5
 
 dev_dependencies:

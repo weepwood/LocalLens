@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../models/collections.dart';
 import '../models/media_item.dart';
 import '../models/server_settings.dart';
 import '../models/server_state.dart';
@@ -21,10 +22,10 @@ class ApiClient {
   ApiClient(this.settings) {
     _client.connectionTimeout = const Duration(seconds: 8);
     _client.idleTimeout = const Duration(seconds: 30);
-    _client.userAgent = 'LocalLens Flutter Client';
+    _client.userAgent = 'LocalLens Flutter Client/0.2';
   }
 
-  static const _requestTimeout = Duration(seconds: 20);
+  static const _requestTimeout = Duration(seconds: 25);
 
   final ServerSettings settings;
   final HttpClient _client = HttpClient();
@@ -75,43 +76,205 @@ class ApiClient {
     return ScanStatus.fromJson(json);
   }
 
+  Future<List<FolderInfo>> listFolders({
+    required String libraryId,
+    String parent = '',
+  }) async {
+    final uri = resolve('/api/v1/folders').replace(queryParameters: <String, String>{
+      'libraryId': libraryId,
+      'parent': parent,
+    });
+    final json = await _requestJson('GET', uri.toString());
+    return (json['items'] as List<dynamic>? ?? const [])
+        .map((item) => FolderInfo.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<MediaPage> listMedia({
     String? type,
     String? search,
     String? libraryId,
+    String? folder,
+    bool recursive = false,
     bool favorite = false,
+    String? albumId,
+    String? tagId,
+    int minRating = 0,
+    String sort = 'timeline',
     int limit = 100,
     int offset = 0,
     String? cursor,
   }) async {
     final query = <String, String>{
       'limit': '$limit',
+      'sort': sort,
       if (cursor == null || cursor.isEmpty) 'offset': '$offset',
       if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
       if (type != null && type.isNotEmpty) 'type': type,
       if (search != null && search.trim().isNotEmpty) 'q': search.trim(),
       if (libraryId != null && libraryId.isNotEmpty) 'libraryId': libraryId,
+      if (folder != null) 'folder': folder,
+      if (recursive) 'recursive': 'true',
       if (favorite) 'favorite': 'true',
+      if (albumId != null && albumId.isNotEmpty) 'albumId': albumId,
+      if (tagId != null && tagId.isNotEmpty) 'tagId': tagId,
+      if (minRating > 0) 'minRating': '$minRating',
     };
-    final uri = Uri.parse('${settings.normalizedBaseUrl}/api/v1/media')
-        .replace(queryParameters: query);
+    final uri = resolve('/api/v1/media').replace(queryParameters: query);
     final json = await _requestJson('GET', uri.toString());
     return MediaPage.fromJson(json);
   }
 
   Future<MediaItem> setFavorite(String mediaId, bool favorite) async {
-    final method = favorite ? 'PUT' : 'DELETE';
     final json = await _requestJson(
-      method,
+      favorite ? 'PUT' : 'DELETE',
       '/api/v1/media/$mediaId/favorite',
     );
     return MediaItem.fromJson(json);
+  }
+
+  Future<MediaItem> setRating(String mediaId, int rating) async {
+    final json = await _requestJson(
+      rating == 0 ? 'DELETE' : 'PUT',
+      '/api/v1/media/$mediaId/rating',
+      body: rating == 0 ? null : <String, dynamic>{'rating': rating},
+    );
+    return MediaItem.fromJson(json);
+  }
+
+  Future<void> retryMetadata(String mediaId) async {
+    await _requestJson('POST', '/api/v1/media/$mediaId/metadata');
+  }
+
+  Future<MediaCollectionState> getMediaCollections(String mediaId) async {
+    final json =
+        await _requestJson('GET', '/api/v1/media/$mediaId/collections');
+    return MediaCollectionState.fromJson(json);
+  }
+
+  Future<PlaybackProgress> getPlaybackProgress(String mediaId) async {
+    final json = await _requestJson('GET', '/api/v1/media/$mediaId/progress');
+    return PlaybackProgress.fromJson(json);
+  }
+
+  Future<void> savePlaybackProgress(
+    String mediaId, {
+    required int positionMs,
+    required int durationMs,
+    required bool completed,
+  }) async {
+    await _requestJson(
+      'PUT',
+      '/api/v1/media/$mediaId/progress',
+      body: <String, dynamic>{
+        'positionMs': positionMs,
+        'durationMs': durationMs,
+        'completed': completed,
+      },
+    );
+  }
+
+  Future<List<AlbumInfo>> listAlbums() async {
+    final json = await _requestJson('GET', '/api/v1/albums');
+    return (json['items'] as List<dynamic>? ?? const [])
+        .map((item) => AlbumInfo.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<AlbumInfo> createAlbum(String name, {String description = ''}) async {
+    final json = await _requestJson(
+      'POST',
+      '/api/v1/albums',
+      body: <String, dynamic>{'name': name, 'description': description},
+    );
+    return AlbumInfo.fromJson(json);
+  }
+
+  Future<void> deleteAlbum(String id) =>
+      _requestEmpty('DELETE', '/api/v1/albums/$id');
+
+  Future<void> setAlbumItem(String albumId, String mediaId, bool selected) =>
+      _requestEmpty(
+        selected ? 'PUT' : 'DELETE',
+        '/api/v1/albums/$albumId/items/$mediaId',
+      );
+
+  Future<List<TagInfo>> listTags() async {
+    final json = await _requestJson('GET', '/api/v1/tags');
+    return (json['items'] as List<dynamic>? ?? const [])
+        .map((item) => TagInfo.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<TagInfo> createTag(String name, {String color = ''}) async {
+    final json = await _requestJson(
+      'POST',
+      '/api/v1/tags',
+      body: <String, dynamic>{'name': name, 'color': color},
+    );
+    return TagInfo.fromJson(json);
+  }
+
+  Future<void> deleteTag(String id) =>
+      _requestEmpty('DELETE', '/api/v1/tags/$id');
+
+  Future<void> setMediaTag(String mediaId, String tagId, bool selected) =>
+      _requestEmpty(
+        selected ? 'PUT' : 'DELETE',
+        '/api/v1/media/$mediaId/tags/$tagId',
+      );
+
+  Future<PairingSessionInfo> createPairingSession() async {
+    final json = await _requestJson('POST', '/api/v1/pairing/session');
+    return PairingSessionInfo.fromJson(json);
+  }
+
+  Future<List<DeviceInfo>> listDevices() async {
+    final json = await _requestJson('GET', '/api/v1/devices');
+    return (json['items'] as List<dynamic>? ?? const [])
+        .map((item) => DeviceInfo.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<void> revokeDevice(String id) =>
+      _requestEmpty('DELETE', '/api/v1/devices/$id');
+
+  static Future<ServerSettings> claimPairing(
+    PairingPayload payload, {
+    required String deviceName,
+    required String platform,
+  }) async {
+    final temporary = ApiClient(ServerSettings(baseUrl: payload.baseUrl, token: ''));
+    try {
+      final json = await temporary._requestJson(
+        'POST',
+        '/api/v1/pairing/claim',
+        authenticated: false,
+        body: <String, dynamic>{
+          'pairingId': payload.pairingId,
+          'secret': payload.secret,
+          'deviceName': deviceName,
+          'platform': platform,
+        },
+      );
+      return ServerSettings(
+        baseUrl: payload.baseUrl,
+        token: json['token'] as String,
+      );
+    } finally {
+      temporary.close();
+    }
+  }
+
+  Future<void> _requestEmpty(String method, String url) async {
+    await _requestJson(method, url);
   }
 
   Future<Map<String, dynamic>> _requestJson(
     String method,
     String url, {
     bool authenticated = true,
+    Map<String, dynamic>? body,
   }) async {
     try {
       final request = await _client
@@ -124,20 +287,24 @@ class ApiClient {
           'Bearer ${settings.token}',
         );
       }
+      if (body != null) {
+        request.headers.contentType = ContentType.json;
+        request.write(jsonEncode(body));
+      }
 
       final response = await request.close().timeout(_requestTimeout);
-      final body = await response
+      final responseBody = await response
           .transform(utf8.decoder)
           .join()
           .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ApiException(
-          body.trim().isEmpty ? '请求失败' : body.trim(),
+          responseBody.trim().isEmpty ? '请求失败' : responseBody.trim(),
           statusCode: response.statusCode,
         );
       }
-      if (body.trim().isEmpty) return <String, dynamic>{};
-      return jsonDecode(body) as Map<String, dynamic>;
+      if (responseBody.trim().isEmpty) return <String, dynamic>{};
+      return jsonDecode(responseBody) as Map<String, dynamic>;
     } on SocketException catch (error) {
       throw ApiException('无法连接服务器：${error.message}');
     } on HandshakeException {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func loadConfig(path string) (Config, error) {
@@ -17,6 +18,9 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
+
 	if cfg.ListenAddress == "" {
 		cfg.ListenAddress = "0.0.0.0:9527"
 	}
@@ -25,6 +29,24 @@ func loadConfig(path string) (Config, error) {
 	}
 	if cfg.DataDir == "" {
 		cfg.DataDir = "./data"
+	}
+	if _, ok := raw["watch_files"]; !ok {
+		cfg.WatchFiles = true
+	}
+	if cfg.ThumbnailWorkers <= 0 {
+		cfg.ThumbnailWorkers = 2
+	}
+	if cfg.MetadataWorkers <= 0 {
+		cfg.MetadataWorkers = 2
+	}
+	if cfg.ThumbnailWorkers > 8 || cfg.MetadataWorkers > 8 {
+		return Config{}, errors.New("worker counts must be between 1 and 8")
+	}
+	if cfg.PairingTTLMinutes <= 0 {
+		cfg.PairingTTLMinutes = 5
+	}
+	if cfg.PairingTTLMinutes > 60 {
+		return Config{}, errors.New("pairing_ttl_minutes must not exceed 60")
 	}
 	if len(cfg.APIToken) < 16 {
 		return Config{}, errors.New("api_token must contain at least 16 characters")
@@ -43,6 +65,15 @@ func loadConfig(path string) (Config, error) {
 	}
 	cfg.DataDir = resolve(cfg.DataDir)
 	cfg.FFmpegPath = resolve(cfg.FFmpegPath)
+	cfg.FFprobePath = resolve(cfg.FFprobePath)
+	if cfg.FFprobePath == "" && cfg.FFmpegPath != "" {
+		name := "ffprobe"
+		if strings.EqualFold(filepath.Ext(cfg.FFmpegPath), ".exe") {
+			name += ".exe"
+		}
+		cfg.FFprobePath = filepath.Join(filepath.Dir(cfg.FFmpegPath), name)
+	}
+	cfg.PublicURL = strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/")
 
 	seenIDs := map[string]bool{}
 	seenPaths := map[string]string{}
@@ -56,14 +87,15 @@ func loadConfig(path string) (Config, error) {
 			return Config{}, err
 		}
 		lib.Path = filepath.Clean(absolute)
-		if seenIDs[lib.ID] {
+		idKey := strings.ToLower(lib.ID)
+		if seenIDs[idKey] {
 			return Config{}, fmt.Errorf("duplicate library id %q", lib.ID)
 		}
-		pathKey := filepath.Clean(lib.Path)
+		pathKey := strings.ToLower(filepath.Clean(lib.Path))
 		if existing, ok := seenPaths[pathKey]; ok {
 			return Config{}, fmt.Errorf("libraries %q and %q use the same path", existing, lib.ID)
 		}
-		seenIDs[lib.ID] = true
+		seenIDs[idKey] = true
 		seenPaths[pathKey] = lib.ID
 	}
 	return cfg, nil
