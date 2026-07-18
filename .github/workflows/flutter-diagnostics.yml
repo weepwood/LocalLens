@@ -1,0 +1,46 @@
+name: Flutter Diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.9"
+          channel: stable
+          cache: true
+      - name: Generate platform and dependencies
+        run: |
+          flutter create --project-name local_lens --org com.weepwood --platforms android .
+          flutter pub get
+      - name: Analyze and capture output
+        id: analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze --no-pub > flutter-analyze.log 2>&1
+          STATUS=$?
+          cat flutter-analyze.log
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload analyzer log
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Flutter-Analyze-Log
+          path: apps/local_lens/flutter-analyze.log
+          if-no-files-found: error
+          retention-days: 7
+      - name: Fail when analyzer found issues
+        shell: bash
+        run: exit "${{ steps.analyze.outputs.status }}"
