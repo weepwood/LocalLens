@@ -2,7 +2,7 @@
 
 LocalLens 是一个本地优先的跨平台媒体库：Windows 上运行 Go 媒体服务，Flutter 客户端通过局域网访问图片与视频。
 
-> 当前状态：MVP 骨架。已包含媒体目录扫描、SQLite 索引、图片缩略图、视频 Range 流、Bearer Token 鉴权，以及 Flutter 媒体网格、图片查看和视频播放界面。
+> 当前状态：可运行 MVP。已包含媒体目录扫描、SQLite 索引、图片缩略图、视频 Range 流、Bearer Token 鉴权，以及 Flutter 分页媒体网格、搜索、扫描进度、图片查看和视频播放界面。
 
 ## 架构
 
@@ -25,7 +25,7 @@ Flutter Android / iOS / Windows
 LocalLens/
 ├── server/                 # Go 媒体服务端
 ├── apps/local_lens/        # Flutter 客户端源码
-└── docs/                   # 架构与 API 文档
+└── docs/                   # 架构、API、发布和项目分析文档
 ```
 
 ## 下载打包产物
@@ -124,6 +124,17 @@ flutter run -d <device-id>
 
 可在 Windows 执行 `ipconfig` 查看局域网 IPv4 地址。手机和 Windows 必须位于可互相访问的同一网络。
 
+## 客户端浏览能力
+
+- 每页 100 条增量加载，滚动接近底部自动继续加载；
+- 显示已加载数量与服务器媒体总数；
+- 图片、视频类型筛选；
+- 文件名搜索防抖，避免连续输入触发大量请求；
+- 下拉刷新媒体、媒体库和扫描状态；
+- 客户端启动扫描并轮询显示发现数、索引数、失败数和当前目录；
+- 媒体卡片显示文件大小、修改日期和缩略图加载进度；
+- 网络超时、TLS、HTTP 和数据解析错误提供明确提示。
+
 ## 已实现接口
 
 - `GET /api/v1/health`
@@ -148,16 +159,18 @@ Authorization: Bearer <api_token>
 - MVP 暂时使用手动输入地址和 Token，尚未实现二维码配对。
 - 视频默认直接播放原文件，客户端不支持的编码尚未自动转码。
 - 视频元数据和封面依赖 FFmpeg/FFprobe 的后续完善。
+- 服务端仍使用 `LIMIT/OFFSET` 分页，尚未实现游标分页和媒体库过滤。
+- 缩略图请求会同步调用 FFmpeg，尚未改为后台任务队列。
 - 暂不提供真实文件删除、移动和重命名接口。
 - 目前使用 HTTP 便于局域网调试；正式远程访问前需要增加 TLS 或通过可信 VPN 接入。
 
 ## 路线图
 
-1. 二维码配对、设备令牌与撤销。
-2. 文件变化监听与扫描事件推送。
-3. FFprobe 视频元数据、HLS 按需转码。
-4. 时间线、收藏、相册和标签。
-5. Windows 托盘管理端与 Windows Service。
-6. HTTPS 证书指纹固定与远程安全接入。
+1. 拆分 Go 单文件服务并引入数据库迁移版本。
+2. 实现媒体库过滤、游标分页和文件变化监听。
+3. 缩略图后台任务队列、FFprobe 元数据和 HLS 按需转码。
+4. 时间线、收藏、相册、标签和播放进度。
+5. 二维码配对、设备令牌与撤销。
+6. Windows 托盘管理端、Windows Service 和 HTTPS 证书指纹固定。
 
-详见 [docs/architecture.md](docs/architecture.md)、[docs/api.md](docs/api.md) 与 [docs/releasing.md](docs/releasing.md)。
+详见 [docs/architecture.md](docs/architecture.md)、[docs/api.md](docs/api.md)、[docs/releasing.md](docs/releasing.md) 与 [docs/project-analysis.md](docs/project-analysis.md)。
