@@ -29,11 +29,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     TimelineScreen(api: _api),
     FolderBrowserScreen(api: _api),
     CollectionsScreen(api: _api),
-    ServerScreen(
-      api: _api,
-      onEditConnection: widget.onEditConnection,
-      onDisconnect: widget.onDisconnect,
-    ),
+    ServerScreen(api: _api, onDisconnect: widget.onDisconnect),
   ];
   int _index = 0;
 
@@ -72,24 +68,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           )
                         : const Icon(Icons.photo_library_rounded, size: 30),
                   ),
-                  trailing: Expanded(
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: extended
-                            ? OutlinedButton.icon(
-                                onPressed: widget.onEditConnection,
-                                icon: const Icon(Icons.settings_ethernet_rounded),
-                                label: const Text('连接设置'),
-                              )
-                            : IconButton(
-                                tooltip: '修改服务器地址',
-                                onPressed: widget.onEditConnection,
-                                icon: const Icon(Icons.settings_ethernet_rounded),
-                              ),
-                      ),
-                    ),
+                  trailing: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: extended
+                        ? OutlinedButton.icon(
+                            onPressed: widget.onEditConnection,
+                            icon: const Icon(Icons.settings_ethernet_rounded),
+                            label: const Text('连接设置'),
+                          )
+                        : IconButton(
+                            tooltip: '修改服务器地址',
+                            onPressed: widget.onEditConnection,
+                            icon: const Icon(Icons.settings_ethernet_rounded),
+                          ),
                   ),
                   destinations: const [
                     NavigationRailDestination(
