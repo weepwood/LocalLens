@@ -1,0 +1,84 @@
+name: Publish Verified v0.1.0
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-verified-v0.1.0.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Publish and verify v0.1.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download verified build artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: "29639049587"
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir downloaded
+
+          mkdir -p release-assets
+          find downloaded -type f \( -name '*.zip' -o -name '*.apk' \) -exec cp {} release-assets/ \;
+
+          test -f release-assets/LocalLens-Server-Windows-x64.zip
+          test -f release-assets/LocalLens-Client-Windows-x64.zip
+          test -f release-assets/LocalLens-Android-universal.apk
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum LocalLens-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1.0
+          TARGET_SHA: 699c34d090266b745b615a98f7169e2516dc25f1
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TARGET_SHA" \
+              --title "LocalLens v0.1.0" \
+              --notes "LocalLens 首个可运行 MVP。包含 Windows Go 媒体服务端、Windows Flutter 客户端、Android 测试 APK 与 SHA-256 校验文件。"
+          fi
+
+      - name: Export release verification
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v0.1.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --json tagName,name,isDraft,isPrerelease,publishedAt,url,assets \
+            > release-verification.json
+          cat release-verification.json
+
+      - name: Upload verification record
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-v0.1.0-release-verification
+          path: release-verification.json
+          if-no-files-found: error
+          retention-days: 30
