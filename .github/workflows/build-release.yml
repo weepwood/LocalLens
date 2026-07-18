@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -91,7 +91,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -109,6 +109,9 @@ jobs:
             --platforms windows `
             .
           flutter pub get
+
+      - name: Test Flutter client
+        run: flutter test
 
       - name: Analyze Flutter client
         run: flutter analyze
@@ -143,14 +146,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -188,17 +190,25 @@ jobs:
 
           flutter pub get
 
+      - name: Test Flutter client
+        run: flutter test
+
       - name: Analyze Flutter client
         run: flutter analyze
 
       - name: Build Android APK
         shell: bash
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           VERSION="0.1.0"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
+            VERSION="${MANUAL_TAG#v}"
           fi
+
           flutter build apk \
             --release \
             --build-name "$VERSION" \
