@@ -18,12 +18,13 @@ func TestStableID(t *testing.T) {
 }
 
 func TestWithin(t *testing.T) {
-	root := filepath.Join("C:", "Media")
+	root := filepath.Join(t.TempDir(), "Media")
 	cases := []struct {
 		name   string
 		target string
 		want   bool
 	}{
+		{name: "same directory", target: root, want: true},
 		{name: "direct child", target: filepath.Join(root, "photo.jpg"), want: true},
 		{name: "nested child", target: filepath.Join(root, "2026", "photo.jpg"), want: true},
 		{name: "parent escape", target: filepath.Join(root, "..", "secret.txt"), want: false},
