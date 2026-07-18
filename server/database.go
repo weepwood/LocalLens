@@ -21,11 +21,14 @@ func openDB(dataDir string) (*sql.DB, error) {
 		return nil, err
 	}
 	path := filepath.ToSlash(filepath.Join(dataDir, "locallens.db"))
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	// WAL allows readers to continue while a writer is active, but SQLite still
+	// permits only one writer. Keep a bounded pool and let busy_timeout absorb
+	// short write bursts from the watcher, API and background workers.
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
 
