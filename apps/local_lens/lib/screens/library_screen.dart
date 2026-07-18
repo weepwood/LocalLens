@@ -115,7 +115,7 @@ class _DesktopShell extends StatelessWidget {
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       itemCount: _destinations.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 5),
+                      separatorBuilder: (context, index) => const SizedBox(height: 5),
                       itemBuilder: (context, itemIndex) {
                         final item = _destinations[itemIndex];
                         return _SidebarDestination(
