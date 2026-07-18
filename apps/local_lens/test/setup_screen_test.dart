@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_lens/models/server_settings.dart';
 import 'package:local_lens/screens/setup_screen.dart';
+import 'package:local_lens/theme/app_theme.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 void main() {
   testWidgets('edit mode pre-fills the saved address and token', (tester) async {
@@ -11,11 +13,16 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: SetupScreen(
-          initialSettings: settings,
-          onSaved: (_) async {},
-          onCancel: () {},
+      ShadApp.custom(
+        theme: AppTheme.shadLight,
+        appBuilder: (context) => MaterialApp(
+          theme: AppTheme.light,
+          builder: (context, child) => ShadAppBuilder(child: child!),
+          home: SetupScreen(
+            initialSettings: settings,
+            onSaved: (_) async {},
+            onCancel: () {},
+          ),
         ),
       ),
     );
