@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -31,14 +30,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-func queryInt(r *http.Request, key string, fallback int) int {
-	value, err := strconv.Atoi(r.URL.Query().Get(key))
-	if err != nil {
-		return fallback
-	}
-	return value
 }
 
 func queryBool(r *http.Request, key string) bool {
