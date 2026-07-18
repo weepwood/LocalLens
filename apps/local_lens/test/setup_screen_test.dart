@@ -20,10 +20,15 @@ void main() {
       ),
     );
 
+    final fields = tester
+        .widgetList<TextFormField>(find.byType(TextFormField))
+        .toList(growable: false);
+
     expect(find.text('修改服务器连接'), findsOneWidget);
     expect(find.text('更新服务器地址'), findsOneWidget);
-    expect(find.text('http://192.168.1.20:9527'), findsOneWidget);
-    expect(find.text('existing-token-1234567890'), findsOneWidget);
+    expect(fields, hasLength(2));
+    expect(fields[0].controller?.text, 'http://192.168.1.20:9527');
+    expect(fields[1].controller?.text, 'existing-token-1234567890');
     expect(find.text('测试并保存新地址'), findsOneWidget);
     expect(find.text('取消修改，返回客户端'), findsOneWidget);
   });
