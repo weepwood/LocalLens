@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+const (
+	workerIdleInterval   = 10 * time.Second
+	workerScanPause      = 500 * time.Millisecond
+	sqliteBusyRetryLimit = 30 * time.Second
+)
+
 func (a *App) startBackgroundWorkers() error {
 	if _, err := a.db.Exec(`UPDATE thumbnail_jobs SET status='pending' WHERE status='running'`); err != nil {
 		return err
@@ -55,13 +61,46 @@ func (a *App) wakeMetadataWorkers() {
 	}
 }
 
+func (a *App) isScanRunning() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.scan.Running
+}
+
+func waitForWorker(ctx context.Context, wake <-chan struct{}, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-wake:
+		return true
+	case <-timer.C:
+		return true
+	}
+}
+
 func (a *App) thumbnailWorker(number int) {
 	defer a.workerWG.Done()
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(workerIdleInterval)
 	defer ticker.Stop()
 	for {
+		if a.isScanRunning() {
+			if !waitForWorker(a.serviceCtx, a.thumbnailWake, workerScanPause) {
+				return
+			}
+			continue
+		}
+
 		job, ok, err := a.claimThumbnailJob(a.serviceCtx)
 		if err != nil {
+			if isSQLiteBusy(err) {
+				a.logger.Debug("thumbnail queue busy", "worker", number, "error", err)
+				if !waitForWorker(a.serviceCtx, a.thumbnailWake, workerScanPause) {
+					return
+				}
+				continue
+			}
 			a.logger.Warn("claim thumbnail job", "worker", number, "error", err)
 		}
 		if ok {
@@ -79,11 +118,25 @@ func (a *App) thumbnailWorker(number int) {
 
 func (a *App) metadataWorker(number int) {
 	defer a.workerWG.Done()
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(workerIdleInterval)
 	defer ticker.Stop()
 	for {
+		if a.isScanRunning() {
+			if !waitForWorker(a.serviceCtx, a.metadataWake, workerScanPause) {
+				return
+			}
+			continue
+		}
+
 		job, ok, err := a.claimMetadataJob(a.serviceCtx)
 		if err != nil {
+			if isSQLiteBusy(err) {
+				a.logger.Debug("metadata queue busy", "worker", number, "error", err)
+				if !waitForWorker(a.serviceCtx, a.metadataWake, workerScanPause) {
+					return
+				}
+				continue
+			}
 			a.logger.Warn("claim metadata job", "worker", number, "error", err)
 		}
 		if ok {
@@ -100,57 +153,96 @@ func (a *App) metadataWorker(number int) {
 }
 
 func (a *App) claimThumbnailJob(ctx context.Context) (ThumbnailJob, bool, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	var job ThumbnailJob
-	err := a.db.QueryRowContext(ctx, `
-SELECT media_id,width,source_modified_at,attempts
-FROM thumbnail_jobs
-WHERE status='pending'
-ORDER BY updated_at
-LIMIT 1`).Scan(&job.MediaID, &job.Width, &job.SourceModifiedAt, &job.Attempts)
+	err := retrySQLiteBusy(ctx, sqliteBusyRetryLimit, func() error {
+		job = ThumbnailJob{}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		return a.db.QueryRowContext(ctx, `
+UPDATE thumbnail_jobs
+SET status='running',attempts=attempts+1,updated_at=?
+WHERE rowid=(
+  SELECT rowid
+  FROM thumbnail_jobs
+  WHERE status='pending'
+  ORDER BY updated_at,media_id,width
+  LIMIT 1
+)
+AND status='pending'
+RETURNING media_id,width,source_modified_at,attempts`, now).
+			Scan(&job.MediaID, &job.Width, &job.SourceModifiedAt, &job.Attempts)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return ThumbnailJob{}, false, nil
 	}
 	if err != nil {
 		return ThumbnailJob{}, false, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := a.db.ExecContext(ctx, `
-UPDATE thumbnail_jobs SET status='running',attempts=attempts+1,updated_at=?
-WHERE media_id=? AND width=? AND status='pending'`, now, job.MediaID, job.Width)
-	if err != nil {
-		return ThumbnailJob{}, false, err
-	}
-	changed, _ := result.RowsAffected()
-	return job, changed == 1, nil
+	return job, true, nil
 }
 
 func (a *App) claimMetadataJob(ctx context.Context) (MetadataJob, bool, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	var job MetadataJob
-	err := a.db.QueryRowContext(ctx, `
-SELECT media_id,source_modified_at,attempts
-FROM metadata_jobs
-WHERE status='pending'
-ORDER BY updated_at
-LIMIT 1`).Scan(&job.MediaID, &job.SourceModifiedAt, &job.Attempts)
+	err := retrySQLiteBusy(ctx, sqliteBusyRetryLimit, func() error {
+		job = MetadataJob{}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		return a.db.QueryRowContext(ctx, `
+UPDATE metadata_jobs
+SET status='running',attempts=attempts+1,updated_at=?
+WHERE rowid=(
+  SELECT rowid
+  FROM metadata_jobs
+  WHERE status='pending'
+  ORDER BY updated_at,media_id
+  LIMIT 1
+)
+AND status='pending'
+RETURNING media_id,source_modified_at,attempts`, now).
+			Scan(&job.MediaID, &job.SourceModifiedAt, &job.Attempts)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return MetadataJob{}, false, nil
 	}
 	if err != nil {
 		return MetadataJob{}, false, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := a.db.ExecContext(ctx, `
-UPDATE metadata_jobs SET status='running',attempts=attempts+1,updated_at=?
-WHERE media_id=? AND status='pending'`, now, job.MediaID)
-	if err != nil {
-		return MetadataJob{}, false, err
+	return job, true, nil
+}
+
+func retrySQLiteBusy(ctx context.Context, limit time.Duration, operation func() error) error {
+	started := time.Now()
+	delay := 25 * time.Millisecond
+	for {
+		err := operation()
+		if err == nil || !isSQLiteBusy(err) {
+			return err
+		}
+		if time.Since(started) >= limit {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if delay < 500*time.Millisecond {
+			delay *= 2
+			if delay > 500*time.Millisecond {
+				delay = 500 * time.Millisecond
+			}
+		}
 	}
-	changed, _ := result.RowsAffected()
-	return job, changed == 1, nil
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "sqlite_busy") ||
+		strings.Contains(message, "database is locked") ||
+		strings.Contains(message, "database table is locked")
 }
 
 func (a *App) enqueueThumbnail(ctx context.Context, mediaID string, width int, sourceModifiedAt string) error {
