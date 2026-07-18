@@ -18,19 +18,19 @@ import (
 type authContextKey struct{}
 
 type pairingPayload struct {
-	Version   int    `json:"version"`
-	BaseURL   string `json:"baseUrl"`
+	Version    int    `json:"version"`
+	BaseURL    string `json:"baseUrl"`
 	ServerName string `json:"serverName"`
-	PairingID string `json:"pairingId"`
-	Secret    string `json:"secret"`
-	ExpiresAt string `json:"expiresAt"`
+	PairingID  string `json:"pairingId"`
+	Secret     string `json:"secret"`
+	ExpiresAt  string `json:"expiresAt"`
 }
 
 type pairingClaim struct {
-	PairingID string `json:"pairingId"`
-	Secret    string `json:"secret"`
+	PairingID  string `json:"pairingId"`
+	Secret     string `json:"secret"`
 	DeviceName string `json:"deviceName"`
-	Platform  string `json:"platform"`
+	Platform   string `json:"platform"`
 }
 
 func (a *App) createPairingSession(baseURL string) (PairingSession, error) {
@@ -38,18 +38,23 @@ func (a *App) createPairingSession(baseURL string) (PairingSession, error) {
 	secret := randomID() + randomID()
 	expiresAt := time.Now().UTC().Add(time.Duration(a.cfg.PairingTTLMinutes) * time.Minute)
 	payloadValue := pairingPayload{
-		Version: 1,
-		BaseURL: strings.TrimRight(baseURL, "/"),
+		Version:    1,
+		BaseURL:    strings.TrimRight(baseURL, "/"),
 		ServerName: a.cfg.ServerName,
-		PairingID: id,
-		Secret: secret,
-		ExpiresAt: expiresAt.Format(time.RFC3339Nano),
+		PairingID:  id,
+		Secret:     secret,
+		ExpiresAt:  expiresAt.Format(time.RFC3339Nano),
 	}
 	payloadBytes, err := json.Marshal(payloadValue)
 	if err != nil {
 		return PairingSession{}, err
 	}
-	session := PairingSession{ID: id, SecretHash: hashToken(secret), Payload: string(payloadBytes), ExpiresAt: expiresAt}
+	session := PairingSession{
+		ID:         id,
+		SecretHash: hashToken(secret),
+		Payload:    string(payloadBytes),
+		ExpiresAt:  expiresAt,
+	}
 	a.pairing.mu.Lock()
 	defer a.pairing.mu.Unlock()
 	a.pairing.removeExpiredLocked()
@@ -99,8 +104,11 @@ func (a *App) claimPairing(ctx context.Context, claim pairingClaim) (Device, str
 	token := randomID() + randomID()
 	now := time.Now().UTC()
 	device := Device{
-		ID: randomID(), Name: claim.DeviceName, Platform: claim.Platform,
-		Scopes: "media:read,media:write", CreatedAt: now,
+		ID:        randomID(),
+		Name:      claim.DeviceName,
+		Platform:  claim.Platform,
+		Scopes:    "media:read,media:write",
+		CreatedAt: now,
 	}
 	_, err := a.db.ExecContext(ctx, `
 INSERT INTO devices(id,name,platform,token_hash,scopes,created_at)
@@ -142,6 +150,11 @@ func withIdentity(r *http.Request, identity AuthIdentity) *http.Request {
 
 func identityFromRequest(r *http.Request) AuthIdentity {
 	identity, _ := r.Context().Value(authContextKey{}).(AuthIdentity)
+	// 鉴权和设备撤销仍使用独立设备身份；播放进度使用共享媒体身份，
+	// 这样 Windows、Android 与后续 iOS 客户端可以接续最近播放位置。
+	if identity.DeviceID != "" {
+		identity.DeviceID = "shared-media-profile"
+	}
 	return identity
 }
 
@@ -158,7 +171,15 @@ FROM devices ORDER BY created_at DESC`)
 		var item Device
 		var created string
 		var lastSeen, revoked sql.NullString
-		if err := rows.Scan(&item.ID, &item.Name, &item.Platform, &item.Scopes, &created, &lastSeen, &revoked); err != nil {
+		if err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.Platform,
+			&item.Scopes,
+			&created,
+			&lastSeen,
+			&revoked,
+		); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -176,7 +197,12 @@ FROM devices ORDER BY created_at DESC`)
 }
 
 func (a *App) revokeDevice(ctx context.Context, id string) error {
-	result, err := a.db.ExecContext(ctx, `UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	result, err := a.db.ExecContext(
+		ctx,
+		`UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		id,
+	)
 	if err != nil {
 		return err
 	}
