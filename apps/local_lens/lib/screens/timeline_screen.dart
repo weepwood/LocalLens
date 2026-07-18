@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models/server_state.dart';
 import '../services/api_client.dart';
+import '../widgets/app_components.dart';
 import '../widgets/media_browser.dart';
 
 class TimelineScreen extends StatefulWidget {
@@ -63,118 +65,141 @@ class _TimelineScreenState extends State<TimelineScreen> {
       minRating: _minRating,
       sort: 'timeline',
       groupByDate: true,
-      header: _buildToolbar(),
+      header: _buildHeader(),
     );
   }
 
-  Widget _buildToolbar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('拍摄时间线', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 4),
-          Text(
-            '优先使用图片 EXIF 或视频容器时间，缺失时回退到文件修改时间。',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420, minWidth: 240),
-                child: SearchBar(
-                  controller: _searchController,
-                  leading: const Icon(Icons.search),
-                  hintText: '搜索文件名或相对路径',
-                  trailing: [
-                    if (_searchController.text.isNotEmpty)
-                      IconButton(
-                        tooltip: '清空',
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _search = '');
+  Widget _buildHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const AppPageHeader(
+          title: '拍摄时间线',
+          description: '按照真实拍摄时间整理照片与视频，快速回到某一天。',
+          icon: LucideIcons.history,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+          child: AppSurface(
+            padding: const EdgeInsets.all(14),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final searchWidth = constraints.maxWidth >= 900
+                    ? 360.0
+                    : constraints.maxWidth >= 560
+                        ? 300.0
+                        : constraints.maxWidth;
+                return Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: searchWidth,
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: '搜索文件名或相对路径',
+                          prefixIcon: const Icon(LucideIcons.search, size: 19),
+                          suffixIcon: _searchController.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: '清空搜索',
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _search = '');
+                                  },
+                                  icon: const Icon(LucideIcons.x, size: 18),
+                                ),
+                        ),
+                        onChanged: (value) {
+                          setState(() {});
+                          _debounce?.cancel();
+                          _debounce = Timer(
+                            const Duration(milliseconds: 360),
+                            () {
+                              if (mounted) setState(() => _search = value.trim());
+                            },
+                          );
                         },
-                        icon: const Icon(Icons.close),
+                        onSubmitted: (value) => setState(() => _search = value.trim()),
                       ),
-                  ],
-                  onChanged: (value) {
-                    setState(() {});
-                    _debounce?.cancel();
-                    _debounce = Timer(
-                      const Duration(milliseconds: 420),
-                      () {
-                        if (mounted) setState(() => _search = value.trim());
-                      },
-                    );
-                  },
-                  onSubmitted: (value) =>
-                      setState(() => _search = value.trim()),
-                ),
-              ),
-              DropdownMenu<String?>(
-                initialSelection: _libraryId,
-                label: const Text('媒体库'),
-                dropdownMenuEntries: [
-                  const DropdownMenuEntry<String?>(
-                    value: null,
-                    label: '全部媒体库',
-                  ),
-                  ..._libraries.map(
-                    (library) => DropdownMenuEntry<String?>(
-                      value: library.id,
-                      label: '${library.name}（${library.mediaCount}）',
                     ),
-                  ),
-                ],
-                onSelected: (value) => setState(() => _libraryId = value),
-              ),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'all', label: Text('全部')),
-                  ButtonSegment(
-                    value: 'image',
-                    icon: Icon(Icons.image_outlined),
-                    label: Text('图片'),
-                  ),
-                  ButtonSegment(
-                    value: 'video',
-                    icon: Icon(Icons.movie_outlined),
-                    label: Text('视频'),
-                  ),
-                ],
-                selected: {_type},
-                onSelectionChanged: (value) =>
-                    setState(() => _type = value.first),
-              ),
-              FilterChip(
-                selected: _favorite,
-                avatar: const Icon(Icons.favorite_outline, size: 18),
-                label: const Text('只看收藏'),
-                onSelected: (value) => setState(() => _favorite = value),
-              ),
-              DropdownMenu<int>(
-                initialSelection: _minRating,
-                label: const Text('最低评分'),
-                dropdownMenuEntries: const [
-                  DropdownMenuEntry(value: 0, label: '不限'),
-                  DropdownMenuEntry(value: 1, label: '1 星以上'),
-                  DropdownMenuEntry(value: 2, label: '2 星以上'),
-                  DropdownMenuEntry(value: 3, label: '3 星以上'),
-                  DropdownMenuEntry(value: 4, label: '4 星以上'),
-                  DropdownMenuEntry(value: 5, label: '5 星'),
-                ],
-                onSelected: (value) =>
-                    setState(() => _minRating = value ?? 0),
-              ),
-            ],
+                    SizedBox(
+                      width: 220,
+                      child: DropdownMenu<String?>(
+                        initialSelection: _libraryId,
+                        expandedInsets: EdgeInsets.zero,
+                        label: const Text('媒体库'),
+                        dropdownMenuEntries: [
+                          const DropdownMenuEntry<String?>(
+                            value: null,
+                            label: '全部媒体库',
+                            leadingIcon: Icon(LucideIcons.database, size: 18),
+                          ),
+                          ..._libraries.map(
+                            (library) => DropdownMenuEntry<String?>(
+                              value: library.id,
+                              label: '${library.name}（${library.mediaCount}）',
+                              leadingIcon: const Icon(LucideIcons.hardDrive, size: 18),
+                            ),
+                          ),
+                        ],
+                        onSelected: (value) => setState(() => _libraryId = value),
+                      ),
+                    ),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'all', label: Text('全部')),
+                        ButtonSegment(
+                          value: 'image',
+                          icon: Icon(LucideIcons.image, size: 17),
+                          label: Text('图片'),
+                        ),
+                        ButtonSegment(
+                          value: 'video',
+                          icon: Icon(LucideIcons.film, size: 17),
+                          label: Text('视频'),
+                        ),
+                      ],
+                      selected: {_type},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (value) => setState(() => _type = value.first),
+                    ),
+                    FilterChip(
+                      selected: _favorite,
+                      avatar: Icon(
+                        _favorite ? LucideIcons.heart : LucideIcons.heart,
+                        size: 16,
+                      ),
+                      label: const Text('收藏'),
+                      onSelected: (value) => setState(() => _favorite = value),
+                    ),
+                    SizedBox(
+                      width: 156,
+                      child: DropdownMenu<int>(
+                        initialSelection: _minRating,
+                        expandedInsets: EdgeInsets.zero,
+                        label: const Text('最低评分'),
+                        leadingIcon: const Icon(LucideIcons.star, size: 17),
+                        dropdownMenuEntries: const [
+                          DropdownMenuEntry(value: 0, label: '不限'),
+                          DropdownMenuEntry(value: 1, label: '1 星以上'),
+                          DropdownMenuEntry(value: 2, label: '2 星以上'),
+                          DropdownMenuEntry(value: 3, label: '3 星以上'),
+                          DropdownMenuEntry(value: 4, label: '4 星以上'),
+                          DropdownMenuEntry(value: 5, label: '5 星'),
+                        ],
+                        onSelected: (value) => setState(() => _minRating = value ?? 0),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
