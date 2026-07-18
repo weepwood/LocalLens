@@ -1,0 +1,295 @@
+name: Build and Release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag, for example v0.2.0"
+        required: true
+        default: "v0.1.0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-lens-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  server-windows:
+    name: Go server · Windows x64
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Test server
+        run: go test ./...
+
+      - name: Build and package server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "LocalLens-Server-Windows-x64"
+          $packageDir = Join-Path $PWD "dist/$packageName"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          go build -trimpath -ldflags "-s -w" -o (Join-Path $packageDir "LocalLensServer.exe") .
+          Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
+
+          @"
+          LocalLens Server
+          =================
+
+          1. Copy config.example.json to config.json.
+          2. Edit the media library paths and api_token.
+          3. Start LocalLensServer.exe -config .\config.json.
+          4. Allow TCP port 9527 only on the Windows Private network profile.
+
+          FFmpeg is not bundled. Put ffmpeg.exe in .\bin\ffmpeg.exe when video thumbnails are required.
+          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
+
+          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Server-Windows-x64
+          path: server/dist/LocalLens-Server-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  flutter-windows:
+    name: Flutter client · Windows x64
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Generate Windows platform project
+        shell: pwsh
+        run: |
+          flutter create `
+            --project-name local_lens `
+            --org com.weepwood `
+            --platforms windows `
+            .
+          flutter pub get
+
+      - name: Analyze Flutter client
+        run: flutter analyze
+
+      - name: Build Windows client
+        run: flutter build windows --release
+
+      - name: Package Windows client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "LocalLens-Client-Windows-x64"
+          $packageDir = Join-Path $PWD "dist/$packageName"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
+          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+
+      - name: Upload Windows client artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Client-Windows-x64
+          path: apps/local_lens/dist/LocalLens-Client-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  flutter-android:
+    name: Flutter client · Android APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform project
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter create \
+            --project-name local_lens \
+            --org com.weepwood \
+            --platforms android \
+            .
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in text:
+              marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+              text = text.replace(marker, marker + "\n    " + permission, 1)
+
+          if 'android:usesCleartextTraffic="true"' not in text:
+              text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+
+          manifest.write_text(text, encoding="utf-8")
+          PY
+
+          flutter pub get
+
+      - name: Analyze Flutter client
+        run: flutter analyze
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="0.1.0"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          flutter build apk \
+            --release \
+            --build-name "$VERSION" \
+            --build-number "${GITHUB_RUN_NUMBER}"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/LocalLens-Android-universal.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Android-universal
+          path: apps/local_lens/dist/LocalLens-Android-universal.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - server-windows
+      - flutter-windows
+      - flutter-android
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/main' &&
+       startsWith(github.event.head_commit.message, 'release:'))
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: LocalLens-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum LocalLens-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Resolve release tag
+        id: release_tag
+        shell: bash
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${MANUAL_TAG}"
+          else
+            TAG="v0.1.0"
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          PRERELEASE_ARGS=()
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "LocalLens $TAG" \
+              --generate-notes \
+              "${PRERELEASE_ARGS[@]}"
+          fi
