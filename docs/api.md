@@ -195,7 +195,7 @@ GET /media/{id}/progress
 PUT /media/{id}/progress
 ```
 
-播放进度绑定当前设备 Token：
+管理员 Token 与每个已配对设备仍保持独立鉴权身份，但播放进度写入共享媒体档案。任一 Windows 或手机客户端都会读取该媒体最近一次保存的位置，从而实现跨端续播：
 
 ```json
 {
@@ -205,7 +205,7 @@ PUT /media/{id}/progress
 }
 ```
 
-管理员 Token 使用固定设备标识 `admin`；每个已配对设备拥有独立进度。
+视频接近播放完成时，客户端会把进度重置并标记为 `completed=true`；下一次打开将从头播放。
 
 ## 相册
 
