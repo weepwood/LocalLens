@@ -1,0 +1,44 @@
+name: Verify v0.3.0 Release
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view v0.3.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --json name,tagName,isDraft,isPrerelease,publishedAt,url,assets \
+            > release.json
+
+          jq -e '.tagName == "v0.3.0"' release.json >/dev/null
+          jq -e '.isDraft == false and .isPrerelease == false' release.json >/dev/null
+
+          for asset in \
+            LocalLens-Server-Windows-x64.zip \
+            LocalLens-Client-Windows-x64.zip \
+            LocalLens-Android-universal.apk \
+            SHA256SUMS.txt; do
+            jq -e --arg asset "$asset" '.assets | any(.name == $asset and .size > 0)' release.json >/dev/null
+          done
+
+          cat release.json
+
+      - name: Upload verification metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: v0.3.0-release-verification
+          path: release.json
+          if-no-files-found: error
+          retention-days: 7
