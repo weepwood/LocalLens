@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,6 +115,104 @@ func TestOpenDBAppliesV02Migrations(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("table %s was not created", table)
 		}
+	}
+}
+
+func TestSQLiteBusyDetection(t *testing.T) {
+	for _, err := range []error{
+		errors.New("database is locked (5) (SQLITE_BUSY)"),
+		errors.New("database table is locked"),
+	} {
+		if !isSQLiteBusy(err) {
+			t.Fatalf("expected SQLite busy error: %v", err)
+		}
+	}
+	if isSQLiteBusy(errors.New("disk I/O error")) {
+		t.Fatal("non-lock error must not be treated as SQLITE_BUSY")
+	}
+}
+
+func TestConcurrentMetadataClaimsAreUnique(t *testing.T) {
+	db, err := openDB(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO libraries(id,name,root_path,recursive,enabled)
+VALUES('main','Main','C:/Media',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	const jobCount = 32
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < jobCount; i++ {
+		id := fmt.Sprintf("media-%02d", i)
+		path := fmt.Sprintf("%s.jpg", id)
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO media_items(
+  id,library_id,relative_path,folder_path,file_name,media_type,mime_type,
+  size_bytes,modified_at,captured_at,missing,last_seen_scan
+) VALUES(?,?,?,?,?,'image','image/jpeg',100,?,?,0,'scan')`,
+			id, "main", path, "", path, "2026-07-19T00:00:00Z", "2026-07-19T00:00:00Z"); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO metadata_jobs(media_id,source_modified_at,status,attempts,last_error,created_at,updated_at)
+VALUES(?,?,'pending',0,'',?,?)`,
+			id, "2026-07-19T00:00:00Z", "2026-07-19T00:00:00Z", fmt.Sprintf("2026-07-19T00:00:%02dZ", i)); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &App{db: db}
+	claimed := make(chan string, jobCount)
+	errorsFound := make(chan error, 4)
+	var wg sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				job, ok, err := app.claimMetadataJob(ctx)
+				if err != nil {
+					errorsFound <- err
+					return
+				}
+				if !ok {
+					return
+				}
+				claimed <- job.MediaID
+			}
+		}()
+	}
+	wg.Wait()
+	close(claimed)
+	close(errorsFound)
+
+	for err := range errorsFound {
+		t.Fatalf("claim failed: %v", err)
+	}
+	seen := make(map[string]struct{}, jobCount)
+	for id := range claimed {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("job claimed more than once: %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != jobCount {
+		t.Fatalf("claimed %d jobs, want %d", len(seen), jobCount)
 	}
 }
 
