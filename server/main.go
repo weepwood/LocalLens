@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.2.1"
+var version = "0.2.2"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -37,6 +37,26 @@ func main() {
 		logger.Error("sync libraries", "error", err)
 		os.Exit(1)
 	}
+
+	recoveredThumbnails, err := app.prepareNativeImageThumbnailQueue(context.Background())
+	if err != nil {
+		logger.Error("prepare native image thumbnail queue", "error", err)
+		os.Exit(1)
+	}
+	ffmpegAvailable := false
+	if cfg.FFmpegPath != "" {
+		if info, statErr := os.Stat(cfg.FFmpegPath); statErr == nil && !info.IsDir() {
+			ffmpegAvailable = true
+		}
+	}
+	logger.Info(
+		"thumbnail engine ready",
+		"nativeFormats", []string{"jpeg", "png", "gif"},
+		"recoveredJobs", recoveredThumbnails,
+		"ffmpegPath", cfg.FFmpegPath,
+		"ffmpegAvailable", ffmpegAvailable,
+	)
+
 	// Mark the initial maintenance scan as running before workers start. Workers
 	// then pause their write claims until the scan transaction has completed,
 	// avoiding predictable SQLITE_BUSY warnings during startup.
@@ -47,6 +67,8 @@ func main() {
 		logger.Error("start background workers", "error", err)
 		os.Exit(1)
 	}
+	app.startNativeImageThumbnailWorkers()
+
 	if cfg.WatchFiles {
 		watcher, watcherErr := newFileWatcher(app)
 		if watcherErr != nil {
@@ -61,7 +83,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           app.routes(),
+		Handler:           app.routesV022(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

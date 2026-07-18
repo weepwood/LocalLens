@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.2.1"
+        description: "Release tag, for example v0.2.2"
         required: true
-        default: "v0.2.1"
+        default: "v0.2.2"
         type: string
 
 permissions:
@@ -63,7 +63,7 @@ jobs:
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-          $version = "0.2.1-dev"
+          $version = "0.2.2-dev"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -80,12 +80,15 @@ jobs:
 
           1. Copy config.example.json to config.json.
           2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\.
-          4. Start LocalLensServer.exe -config .\config.json.
-          5. Allow TCP port 9527 only on the Windows Private network profile.
+          3. FFmpeg is optional for JPEG/PNG/GIF thumbnails, but is still required
+             for video, HEIC, WEBP, TIFF and other compatibility formats.
+          4. Put ffmpeg.exe and ffprobe.exe in .\bin\ when those formats are used.
+          5. Start LocalLensServer.exe -config .\config.json.
+          6. Allow TCP port 9527 only on the Windows Private network profile.
 
-          The server automatically migrates existing v0.1 databases, watches enabled
-          folders, and resumes pending metadata and thumbnail jobs after restart.
+          v0.2.2 automatically restores image thumbnail jobs which became failed
+          in older versions. Use GET /api/v1/thumbnails/diagnostics with the admin
+          token to inspect queue counts and recent failure reasons.
           "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
@@ -137,7 +140,7 @@ jobs:
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
-          $version = "0.2.1"
+          $version = "0.2.2"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -229,7 +232,7 @@ jobs:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="0.2.1"
+          VERSION="0.2.2"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
@@ -295,7 +298,7 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.2.1"
+            TAG="v0.2.2"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
