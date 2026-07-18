@@ -321,7 +321,8 @@ class _ServerScreenState extends State<ServerScreen> {
                   headers: widget.api.authorizationHeaders,
                   width: 260,
                   height: 260,
-                  errorBuilder: (_, error, __) => Text('二维码加载失败：$error'),
+                  errorBuilder: (context, error, stackTrace) =>
+                      Text('二维码加载失败：$error'),
                 ),
               ),
               Center(child: Text('有效期至 ${_dateTime(_pairing!.expiresAt)}')),
