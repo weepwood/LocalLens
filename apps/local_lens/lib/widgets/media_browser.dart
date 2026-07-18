@@ -255,7 +255,7 @@ class MediaBrowserState extends State<MediaBrowser> {
               ),
               ButtonSegment(
                 value: true,
-                icon: Icon(LucideIcons.grid3X3, size: 17),
+                icon: Icon(LucideIcons.grid, size: 17),
                 tooltip: '紧凑网格',
               ),
             ],
