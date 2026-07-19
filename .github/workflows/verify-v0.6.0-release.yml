@@ -77,19 +77,26 @@ jobs:
                   "\n".join(f"{name}\t{size}" for name, size in entries) + "\n",
                   encoding="utf-8",
               )
+
+              client_matches = [
+                  (name, size)
+                  for name, size in entries
+                  if PurePosixPath(name).name.lower() in {"locallens.exe", "local_lens.exe"}
+              ]
+              results["client_exe"] = bool(client_matches) and client_matches[0][1] > 0
               requirements = {
-                  "client_exe": "LocalLens.exe",
                   "embedded_server": "runtime/LocalLensServer.exe",
                   "media_tools_readme": "runtime/media-tools/README.txt",
               }
-              selected = []
+              selected = [
+                  f"{client_matches[0][0]}\t{client_matches[0][1]}"
+              ] if client_matches else []
               for key, suffix in requirements.items():
                   matches = [(name, size) for name, size in entries if name.endswith(suffix)]
                   results[key] = bool(matches) and matches[0][1] > 0
                   if matches:
                       selected.append(f"{matches[0][0]}\t{matches[0][1]}")
               Path("client-package.txt").write_text("\n".join(selected) + "\n", encoding="utf-8")
-
               details.extend(f"asset_{name}={size}" for name, size in sorted(assets.items()))
           except Exception:
               details.append(traceback.format_exc())
