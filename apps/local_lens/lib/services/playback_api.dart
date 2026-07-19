@@ -5,6 +5,8 @@ import 'dart:io';
 import '../models/playback_manifest.dart';
 import 'api_client.dart';
 
+export '../models/collections.dart' show PlaybackProgress;
+
 extension PlaybackApi on ApiClient {
   Future<PlaybackManifest> requestPlaybackManifest(
     String mediaId, {
