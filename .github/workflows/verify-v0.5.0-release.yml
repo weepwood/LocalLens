@@ -1,0 +1,75 @@
+name: Verify v0.5.0 Release
+
+on:
+  push:
+    branches: ["chore/verify-v0.5.0-release"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for and inspect published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.5.0"
+          for attempt in $(seq 1 120); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,isPrerelease,assets > release.json 2>/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == "120" ]]; then
+              echo "Release $TAG did not appear" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          assert data["tagName"] == "v0.5.0", data
+          assert data["isDraft"] is False, data
+          assert data["isPrerelease"] is False, data
+
+          expected = {
+              "LocalLens-Server-Windows-x64.zip",
+              "LocalLens-Client-Windows-x64.zip",
+              "LocalLens-Android-universal.apk",
+              "SHA256SUMS.txt",
+          }
+          assets = {item["name"]: item for item in data.get("assets", [])}
+          missing = expected.difference(assets)
+          assert not missing, f"missing release assets: {sorted(missing)}"
+          for name in expected:
+              assert int(assets[name].get("size", 0)) > 0, f"empty release asset: {name}"
+
+          Path("verification.txt").write_text(
+              "tag=v0.5.0\n"
+              + "draft=false\n"
+              + "prerelease=false\n"
+              + "\n".join(
+                  f"{name}={assets[name]['size']}" for name in sorted(expected)
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          cat verification.txt
+
+      - name: Upload verification metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: v0.5.0-release-verification
+          path: verification.txt
+          if-no-files-found: error
+          retention-days: 7
