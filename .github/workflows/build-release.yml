@@ -24,7 +24,8 @@ concurrency:
 env:
   FLUTTER_VERSION: "3.41.9"
   FFMPEG_VERSION: "8.1.2"
-  FFMPEG_ARCHIVE_URL: "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip"
+  FFMPEG_ARCHIVE_URL: "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip"
+  FFMPEG_ARCHIVE_SHA256: "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
 
 jobs:
   server-windows:
@@ -33,6 +34,7 @@ jobs:
     defaults:
       run:
         working-directory: server
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -112,6 +114,7 @@ jobs:
     defaults:
       run:
         working-directory: apps/local_lens
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -169,11 +172,21 @@ jobs:
           $extractPath = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION"
           $toolsPath = Join-Path $env:RUNNER_TEMP "local-lens-ffmpeg"
 
-          Invoke-WebRequest `
-            -Uri $env:FFMPEG_ARCHIVE_URL `
-            -OutFile $archivePath `
-            -MaximumRetryCount 3 `
-            -RetryIntervalSec 5
+          & curl.exe `
+            --fail `
+            --location `
+            --retry 3 `
+            --retry-delay 5 `
+            --output $archivePath `
+            $env:FFMPEG_ARCHIVE_URL
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download the pinned FFmpeg archive"
+          }
+
+          $archiveHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveHash -ne $env:FFMPEG_ARCHIVE_SHA256) {
+            throw "FFmpeg archive checksum mismatch. Expected $env:FFMPEG_ARCHIVE_SHA256, got $archiveHash"
+          }
 
           if (Test-Path $extractPath) {
             Remove-Item $extractPath -Recurse -Force
@@ -204,7 +217,6 @@ jobs:
           Copy-Item $ffmpeg.FullName (Join-Path $toolsPath "ffmpeg.exe")
           Copy-Item $ffprobe.FullName (Join-Path $toolsPath "ffprobe.exe")
 
-          $archiveHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
           @"
           FFmpeg $env:FFMPEG_VERSION
           =====================
@@ -212,12 +224,12 @@ jobs:
           Source archive:
           $env:FFMPEG_ARCHIVE_URL
 
-          Downloaded archive SHA-256:
+          Verified archive SHA-256:
           $archiveHash
 
-          FFmpeg is a separate executable distributed with LocalLens for media
+          FFmpeg is distributed as a separate executable with LocalLens for media
           metadata, thumbnails and transcoding. See https://ffmpeg.org/legal.html
-          and the source/build information published by the build distributor.
+          and the source/build information published by GyanD.
           "@ | Set-Content (Join-Path $toolsPath "FFMPEG-NOTICE.txt") -Encoding UTF8
 
       - name: Package unified Windows application
@@ -307,6 +319,7 @@ jobs:
             client_executable = "LocalLens.exe"
             embedded_server = "runtime/LocalLensServer.exe"
             ffmpeg_version = $env:FFMPEG_VERSION
+            ffmpeg_archive_sha256 = $env:FFMPEG_ARCHIVE_SHA256
             ffmpeg_path = "runtime/media-tools/ffmpeg.exe"
             ffprobe_path = "runtime/media-tools/ffprobe.exe"
             ffmpeg_sha256 = $ffmpegHash
@@ -387,6 +400,9 @@ jobs:
           }
           if ($manifest.ffmpeg_version -ne $env:FFMPEG_VERSION) {
             throw "Bundle manifest has the wrong FFmpeg version"
+          }
+          if ($manifest.ffmpeg_archive_sha256 -ne $env:FFMPEG_ARCHIVE_SHA256) {
+            throw "Bundle manifest has the wrong FFmpeg archive checksum"
           }
 
           $ffmpegVersion = & $ffmpegPath -version 2>&1 | Select-Object -First 1
@@ -478,6 +494,7 @@ jobs:
     defaults:
       run:
         working-directory: apps/local_lens
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -575,6 +592,7 @@ jobs:
        startsWith(github.event.head_commit.message, 'release:'))
     permissions:
       contents: write
+
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v5
