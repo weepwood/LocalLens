@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -36,7 +35,12 @@ class _RootScreenState extends State<RootScreen> {
     try {
       final bootstrap = await _supervisor.ensureBootstrap();
       await _store.save(bootstrap.settings);
-      unawaited(_supervisor.start(configPath: bootstrap.configPath));
+      await _supervisor.start(configPath: bootstrap.configPath);
+      if (!_supervisor.state.isRunning) {
+        throw StateError(
+          _supervisor.state.lastError ?? '本机服务未能通过健康检查。',
+        );
+      }
       return bootstrap.settings;
     } catch (error) {
       _bootstrapError = error;
