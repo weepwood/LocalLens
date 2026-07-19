@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.5.0"
+        description: "Release tag, for example v0.6.0"
         required: true
-        default: "v0.5.0"
+        default: "v0.6.0"
         type: string
 
 permissions:
@@ -53,7 +53,7 @@ jobs:
       - name: Test server
         run: go test ./...
 
-      - name: Build and package server
+      - name: Build standalone and embedded servers
         shell: pwsh
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
@@ -63,14 +63,21 @@ jobs:
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-          $version = "0.5.0-dev"
+          $version = "0.6.0-dev"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
             $version = $env:MANUAL_TAG.TrimStart("v")
           }
 
-          go build -trimpath -ldflags "-s -w -X main.version=$version" -o (Join-Path $packageDir "LocalLensServer.exe") .
+          go build -trimpath `
+            -ldflags "-s -w -X main.version=$version" `
+            -o (Join-Path $packageDir "LocalLensServer.exe") .
+
+          go build -trimpath `
+            -ldflags "-H=windowsgui -s -w -X main.version=$version" `
+            -o (Join-Path $packageDir "LocalLensServerEmbedded.exe") .
+
           Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
           New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "bin") | Out-Null
 
@@ -78,20 +85,19 @@ jobs:
           LocalLens Server $version
           ==========================
 
+          Standalone mode:
           1. Copy config.example.json to config.json.
           2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\.
-          4. FFmpeg is optional for JPEG/PNG/GIF thumbnails, but required for
-             video thumbnails, metadata compatibility and HLS transcoding.
-          5. Configure transcode_workers, transcode_cache_gb and
-             transcode_hardware for this computer.
-          6. Start LocalLensServer.exe -config .\config.json.
-          7. Allow TCP port 9527 only on the Windows Private network profile.
+          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when video transcoding is needed.
+          4. Start LocalLensServer.exe -config .\config.json.
 
-          v0.5.0 adds playback capability negotiation, Direct Play selection,
-          persistent on-demand HLS transcoding, 1080p/720p/480p compatibility
-          profiles, transcode diagnostics, cache limits and external subtitle
-          discovery. Existing databases and config files remain compatible.
+          LocalLensServerEmbedded.exe is the no-console runtime used by the unified
+          Windows client. Most users should install the LocalLens Windows client
+          instead of starting this file manually.
+
+          v0.6.0 adds the Windows unified host, automatic local configuration,
+          embedded server lifecycle management and visual server settings.
+          Existing databases and server configuration remain compatible.
           "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
@@ -106,6 +112,7 @@ jobs:
 
   flutter-windows:
     name: Flutter client · Windows x64
+    needs: server-windows
     runs-on: windows-latest
     defaults:
       run:
@@ -114,6 +121,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Download embedded server artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: LocalLens-Server-Windows-x64
+          path: ${{ runner.temp }}/local-lens-server
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -143,7 +156,7 @@ jobs:
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
-          $version = "0.5.0"
+          $version = "0.6.0"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -151,7 +164,7 @@ jobs:
           }
           flutter build windows --release --build-name $version --build-number $env:GITHUB_RUN_NUMBER
 
-      - name: Package Windows client
+      - name: Package unified Windows application
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -159,6 +172,46 @@ jobs:
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
+
+          $serverArtifactDir = Join-Path $env:RUNNER_TEMP "local-lens-server"
+          $serverZip = Get-ChildItem $serverArtifactDir -Filter "*.zip" -Recurse | Select-Object -First 1
+          if (-not $serverZip) {
+            throw "Embedded server artifact zip was not found"
+          }
+          $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
+          Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
+          $embeddedServer = Get-ChildItem $serverExtractDir -Filter "LocalLensServerEmbedded.exe" -Recurse | Select-Object -First 1
+          if (-not $embeddedServer) {
+            throw "LocalLensServerEmbedded.exe was not found in server artifact"
+          }
+
+          $runtimeDir = Join-Path $packageDir "runtime"
+          $mediaToolsDir = Join-Path $runtimeDir "media-tools"
+          New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
+          Copy-Item $embeddedServer.FullName (Join-Path $runtimeDir "LocalLensServer.exe") -Force
+
+          @"
+          Optional media tools
+          ====================
+
+          Put ffmpeg.exe and ffprobe.exe in this directory to enable video
+          thumbnails, broad metadata compatibility and HLS transcoding.
+          The LocalLens client detects these files when it creates local config.
+          "@ | Set-Content -Path (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
+
+          @"
+          LocalLens Windows ${{ github.run_number }}
+          =========================================
+
+          Launch LocalLens.exe only. The application automatically creates a local
+          configuration, starts the embedded server without a console window and
+          connects through 127.0.0.1. Server data is stored under
+          %LOCALAPPDATA%\LocalLens rather than this installation directory.
+          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
+
+          if (-not (Test-Path (Join-Path $runtimeDir "LocalLensServer.exe"))) {
+            throw "Unified Windows package is missing runtime/LocalLensServer.exe"
+          }
           Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
 
       - name: Upload Windows client artifact
@@ -235,7 +288,7 @@ jobs:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="0.5.0"
+          VERSION="0.6.0"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
@@ -301,7 +354,7 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.5.0"
+            TAG="v0.6.0"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
