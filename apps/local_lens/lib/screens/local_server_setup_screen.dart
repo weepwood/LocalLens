@@ -162,7 +162,8 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                         const SizedBox(height: 14),
                         _MessagePanel(
                           error: true,
-                          message: '当前安装目录没有找到内置服务器。请使用新版统一 Windows 安装包。',
+                          message:
+                              '当前目录不是完整的 LocalLens Windows 一体化安装包：缺少 runtime\\LocalLensServer.exe。请下载 LocalLens-Windows-x64.zip，完整解压后再运行 LocalLens.exe。',
                         ),
                       ],
                       if (_error != null) ...[
