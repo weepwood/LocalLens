@@ -21,6 +21,8 @@ class LocalServerSupervisor {
 
   static final LocalServerSupervisor instance = LocalServerSupervisor._();
 
+  static const _storageMarkerName = '.locallens-data-root.json';
+
   final StreamController<ServerRuntimeState> _stateController =
       StreamController<ServerRuntimeState>.broadcast();
   final StreamController<ServerLogEntry> _logController =
@@ -37,12 +39,38 @@ class LocalServerSupervisor {
   Stream<ServerRuntimeState> get states => _stateController.stream;
   Stream<ServerLogEntry> get logs => _logController.stream;
 
-  String get applicationDataPath {
+  String get defaultApplicationDataPath {
     final root = Platform.environment['LOCALAPPDATA']?.trim();
     if (root != null && root.isNotEmpty) {
       return _join(root, 'LocalLens');
     }
     return _join(File(Platform.resolvedExecutable).parent.path, 'LocalLensData');
+  }
+
+  String get storagePointerPath {
+    final root = Platform.environment['LOCALAPPDATA']?.trim();
+    if (root != null && root.isNotEmpty) {
+      return _join(root, 'LocalLens.storage.json');
+    }
+    return _join(
+      File(Platform.resolvedExecutable).parent.path,
+      'LocalLens.storage.json',
+    );
+  }
+
+  String get applicationDataPath {
+    try {
+      final pointer = File(storagePointerPath);
+      if (!pointer.existsSync()) return defaultApplicationDataPath;
+      final raw = jsonDecode(pointer.readAsStringSync());
+      final configured = (raw as Map<String, dynamic>)['root'] as String?;
+      if (configured == null || configured.trim().isEmpty) {
+        return defaultApplicationDataPath;
+      }
+      return Directory(configured).absolute.path;
+    } on Object {
+      return defaultApplicationDataPath;
+    }
   }
 
   String get configPath => _join(applicationDataPath, 'config', 'server.json');
@@ -51,6 +79,7 @@ class LocalServerSupervisor {
   String get cachePath => _join(applicationDataPath, 'cache');
   String get logPath => _join(applicationDataPath, 'logs', 'server.log');
   String get pidPath => _join(applicationDataPath, 'runtime', 'server.pid');
+  String get storageMarkerPath => _join(applicationDataPath, _storageMarkerName);
 
   String get bundledServerPath => _join(
         File(Platform.resolvedExecutable).parent.path,
@@ -75,13 +104,35 @@ class LocalServerSupervisor {
   bool get isSupported => Platform.isWindows;
   bool get hasConfiguration => File(configPath).existsSync();
   bool get hasBundledServer => File(bundledServerPath).existsSync();
+  bool get hasBundledFFmpeg =>
+      File(bundledFFmpegPath).existsSync() &&
+      File(bundledFFprobePath).existsSync();
+
+  /// Converts a parent folder selected by the user into an isolated LocalLens
+  /// data root. Keeping all owned data in a dedicated child folder makes reset
+  /// safe even when the selected parent also contains unrelated files.
+  String resolveStorageRoot(String selectedDirectory) {
+    final selected = Directory(selectedDirectory).absolute.path;
+    if (_basename(selected).toLowerCase() == 'locallensdata') return selected;
+    return _join(selected, 'LocalLensData');
+  }
 
   Future<LocalServerConfig?> loadConfig() async {
     final file = File(configPath);
     if (!await file.exists()) return null;
     try {
       final raw = jsonDecode(await file.readAsString());
-      return LocalServerConfig.fromJson(raw as Map<String, dynamic>);
+      var config = LocalServerConfig.fromJson(raw as Map<String, dynamic>);
+      final normalized = await _withAvailableMediaTools(config);
+      if (normalized.ffmpegPath != config.ffmpegPath ||
+          normalized.ffprobePath != config.ffprobePath ||
+          normalized.dataDir != config.dataDir) {
+        config = normalized;
+        await _writeConfig(config, createBackup: false);
+      }
+      return config;
+    } on LocalServerException {
+      rethrow;
     } on Object catch (error) {
       throw LocalServerException('本地服务器配置无法读取：$error');
     }
@@ -89,19 +140,32 @@ class LocalServerSupervisor {
 
   Future<LocalServerConfig> createDefaultConfig({
     required String libraryPath,
+    required String storageRoot,
     String libraryName = '媒体库',
     String serverName = 'LocalLens',
     bool allowLan = true,
     int port = 9527,
   }) async {
     final normalizedLibrary = Directory(libraryPath).absolute.path;
+    final normalizedStorage = Directory(storageRoot).absolute.path;
     if (!await Directory(normalizedLibrary).exists()) {
       throw const LocalServerException('所选媒体目录不存在或无法访问');
     }
     if (port < 1024 || port > 65535) {
       throw const LocalServerException('端口必须在 1024 到 65535 之间');
     }
+    _validateStorageAgainstLibraries(
+      normalizedStorage,
+      <LocalLibraryConfig>[
+        LocalLibraryConfig(
+          id: 'main',
+          name: libraryName,
+          path: normalizedLibrary,
+        ),
+      ],
+    );
 
+    await _activateStorageRoot(normalizedStorage, requireEmptyTarget: true);
     await _ensureDirectories();
     final lanAddress = allowLan ? await discoverLanIPv4() : null;
     final config = LocalServerConfig(
@@ -135,14 +199,22 @@ class LocalServerSupervisor {
   Future<void> saveConfig(LocalServerConfig config) async {
     _validateConfig(config);
     await _ensureDirectories();
+    await _writeConfig(config, createBackup: true);
+  }
+
+  Future<void> _writeConfig(
+    LocalServerConfig config, {
+    required bool createBackup,
+  }) async {
     final target = File(configPath);
     final temporary = File('$configPath.tmp');
     final backup = File(configBackupPath);
+    await target.parent.create(recursive: true);
     final formatted = const JsonEncoder.withIndent('  ').convert(config.toJson());
 
     await temporary.writeAsString('$formatted\n', flush: true);
     if (await target.exists()) {
-      await target.copy(backup.path);
+      if (createBackup) await target.copy(backup.path);
       await target.delete();
     }
     await temporary.rename(target.path);
@@ -163,6 +235,7 @@ class LocalServerSupervisor {
         throw const LocalServerException('媒体库名称和目录不能为空');
       }
     }
+    _validateStorageAgainstLibraries(applicationDataPath, config.libraries);
     if (config.thumbnailWorkers < 1 || config.thumbnailWorkers > 8 ||
         config.metadataWorkers < 1 || config.metadataWorkers > 8) {
       throw const LocalServerException('缩略图和元数据 Worker 必须在 1 到 8 之间');
@@ -172,6 +245,19 @@ class LocalServerSupervisor {
     }
     if (config.transcodeCacheGB < 1 || config.transcodeCacheGB > 500) {
       throw const LocalServerException('转码缓存必须在 1 到 500 GB 之间');
+    }
+  }
+
+  void _validateStorageAgainstLibraries(
+    String storageRoot,
+    List<LocalLibraryConfig> libraries,
+  ) {
+    for (final library in libraries) {
+      if (_pathsOverlap(storageRoot, library.path)) {
+        throw const LocalServerException(
+          'LocalLens 数据目录不能与媒体目录相同，也不能互相包含。请分别选择两个独立目录。',
+        );
+      }
     }
   }
 
@@ -250,7 +336,11 @@ class LocalServerSupervisor {
       _process = process;
       await File(pidPath).writeAsString('${process.pid}', flush: true);
       _listenToProcess(process);
-      unawaited(process.exitCode.then((code) => _handleProcessExit(code, effectiveConfig)));
+      unawaited(
+        process.exitCode.then(
+          (code) => _handleProcessExit(code, effectiveConfig),
+        ),
+      );
 
       final deadline = DateTime.now().add(const Duration(seconds: 20));
       String? version;
@@ -285,7 +375,7 @@ class LocalServerSupervisor {
   }
 
   Future<void> stop() async {
-    if (_state.status == ServerRuntimeStatus.stopped) return;
+    if (_state.status == ServerRuntimeStatus.stopped && _process == null) return;
     _intentionalStop = true;
     _emitState(_state.copyWith(status: ServerRuntimeStatus.stopping));
     await _terminateProcess();
@@ -309,10 +399,66 @@ class LocalServerSupervisor {
     await start(config: effectiveConfig);
   }
 
-  Future<ServerSettings> applyConfig(LocalServerConfig config) async {
-    await saveConfig(config);
-    await restart(config: config);
-    return _settingsFor(config);
+  Future<ServerSettings> applyConfig(
+    LocalServerConfig config, {
+    String? storageRoot,
+  }) async {
+    var effectiveConfig = config;
+    final requestedRoot = storageRoot == null
+        ? applicationDataPath
+        : Directory(storageRoot).absolute.path;
+    _validateStorageAgainstLibraries(requestedRoot, config.libraries);
+
+    if (!_samePath(requestedRoot, applicationDataPath)) {
+      effectiveConfig = await _moveStorageAndApplyConfig(
+        requestedRoot,
+        config,
+      );
+    } else {
+      effectiveConfig = await _withAvailableMediaTools(
+        config.copyWith(dataDir: dataPath),
+      );
+      await saveConfig(effectiveConfig);
+      await restart(config: effectiveConfig);
+    }
+    return _settingsFor(effectiveConfig);
+  }
+
+  Future<LocalServerConfig> _moveStorageAndApplyConfig(
+    String newRoot,
+    LocalServerConfig config,
+  ) async {
+    final oldRoot = applicationDataPath;
+    if (_pathsOverlap(oldRoot, newRoot)) {
+      throw const LocalServerException('新的数据目录不能位于当前数据目录内部或外部');
+    }
+
+    await stop();
+    await _prepareStorageRoot(newRoot, requireEmptyTarget: true);
+    await _copyDirectoryContents(Directory(oldRoot), Directory(newRoot));
+    await _writeStoragePointer(newRoot);
+
+    var migratedConfig = config.copyWith(dataDir: dataPath);
+    migratedConfig = await _withAvailableMediaTools(migratedConfig);
+    await saveConfig(migratedConfig);
+    await start(config: migratedConfig);
+
+    await _deleteOwnedRoot(oldRoot);
+    return migratedConfig;
+  }
+
+  Future<void> clearDataAndRestoreDefaults() async {
+    final currentRoot = applicationDataPath;
+    await stop();
+
+    await _deleteOwnedRoot(currentRoot);
+    if (!_samePath(currentRoot, defaultApplicationDataPath)) {
+      await _deleteOwnedRoot(defaultApplicationDataPath);
+    }
+
+    final pointer = File(storagePointerPath);
+    if (await pointer.exists()) await pointer.delete();
+    _emitState(const ServerRuntimeState.stopped());
   }
 
   ServerSettings _settingsFor(LocalServerConfig config) {
@@ -335,7 +481,9 @@ class LocalServerSupervisor {
         }
       }
       for (final interface in interfaces) {
-        if (interface.addresses.isNotEmpty) return interface.addresses.first.address;
+        if (interface.addresses.isNotEmpty) {
+          return interface.addresses.first.address;
+        }
       }
     } on Object {
       return null;
@@ -371,7 +519,10 @@ class LocalServerSupervisor {
 
   Future<void> _appendLog(String line) async {
     if (line.trim().isEmpty) return;
-    final entry = ServerLogEntry(timestamp: DateTime.now(), message: line.trim());
+    final entry = ServerLogEntry(
+      timestamp: DateTime.now(),
+      message: line.trim(),
+    );
     if (!_logController.isClosed) _logController.add(entry);
     await File(logPath).parent.create(recursive: true);
     await File(logPath).writeAsString(
@@ -392,7 +543,9 @@ class LocalServerSupervisor {
       restartCount: attempt,
     ));
     if (attempt > 3) return;
-    await Future<void>.delayed(Duration(seconds: attempt == 1 ? 2 : attempt == 2 ? 5 : 15));
+    await Future<void>.delayed(
+      Duration(seconds: attempt == 1 ? 2 : attempt == 2 ? 5 : 15),
+    );
     if (_intentionalStop || _disposed) return;
     try {
       await start(config: config);
@@ -409,17 +562,22 @@ class LocalServerSupervisor {
     try {
       await process.exitCode.timeout(const Duration(seconds: 5));
     } on TimeoutException {
-      await Process.run('taskkill', <String>['/PID', '${process.pid}', '/T', '/F']);
+      await Process.run(
+        'taskkill',
+        <String>['/PID', '${process.pid}', '/T', '/F'],
+      );
     }
   }
 
   Future<String?> _readServerVersion(LocalServerConfig config) async {
-    final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 700);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(milliseconds: 700);
     try {
       final request = await client
           .getUrl(Uri.parse('${config.localBaseUrl}/api/v1/server'))
           .timeout(const Duration(milliseconds: 900));
-      final response = await request.close().timeout(const Duration(milliseconds: 900));
+      final response =
+          await request.close().timeout(const Duration(milliseconds: 900));
       if (response.statusCode != HttpStatus.ok) return null;
       final body = await response.transform(utf8.decoder).join();
       final data = jsonDecode(body) as Map<String, dynamic>;
@@ -455,6 +613,110 @@ class LocalServerSupervisor {
     }
   }
 
+  Future<LocalServerConfig> _withAvailableMediaTools(
+    LocalServerConfig config,
+  ) async {
+    final ffmpeg = await _resolveToolPath(config.ffmpegPath, bundledFFmpegPath);
+    final ffprobe = await _resolveToolPath(config.ffprobePath, bundledFFprobePath);
+    return config.copyWith(
+      dataDir: dataPath,
+      ffmpegPath: ffmpeg,
+      ffprobePath: ffprobe,
+    );
+  }
+
+  Future<String> _resolveToolPath(String configured, String bundled) async {
+    if (configured.trim().isNotEmpty && await File(configured).exists()) {
+      return File(configured).absolute.path;
+    }
+    if (await File(bundled).exists()) return File(bundled).absolute.path;
+    return '';
+  }
+
+  Future<void> _activateStorageRoot(
+    String root, {
+    required bool requireEmptyTarget,
+  }) async {
+    final normalized = Directory(root).absolute.path;
+    await _prepareStorageRoot(
+      normalized,
+      requireEmptyTarget: requireEmptyTarget,
+    );
+    if (_samePath(normalized, defaultApplicationDataPath)) {
+      final pointer = File(storagePointerPath);
+      if (await pointer.exists()) await pointer.delete();
+    } else {
+      await _writeStoragePointer(normalized);
+    }
+  }
+
+  Future<void> _prepareStorageRoot(
+    String root, {
+    required bool requireEmptyTarget,
+  }) async {
+    final directory = Directory(root);
+    if (await directory.exists()) {
+      final marker = File(_join(root, _storageMarkerName));
+      final entries = await directory.list(followLinks: false).toList();
+      if (requireEmptyTarget && entries.isNotEmpty && !await marker.exists()) {
+        throw const LocalServerException(
+          '所选数据目录已经包含其他文件。请选择一个空目录，或选择其上级目录让 LocalLens 创建 LocalLensData。',
+        );
+      }
+    } else {
+      await directory.create(recursive: true);
+    }
+    await File(_join(root, _storageMarkerName)).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
+        'owner': 'LocalLens',
+        'schema': 1,
+      }),
+      flush: true,
+    );
+  }
+
+  Future<void> _writeStoragePointer(String root) async {
+    final pointer = File(storagePointerPath);
+    await pointer.parent.create(recursive: true);
+    final temporary = File('${pointer.path}.tmp');
+    await temporary.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(<String, dynamic>{'root': root, 'schema': 1})}\n',
+      flush: true,
+    );
+    if (await pointer.exists()) await pointer.delete();
+    await temporary.rename(pointer.path);
+  }
+
+  Future<void> _copyDirectoryContents(
+    Directory source,
+    Directory destination,
+  ) async {
+    if (!await source.exists()) return;
+    await destination.create(recursive: true);
+    await for (final entity in source.list(followLinks: false)) {
+      final name = _basename(entity.path);
+      final targetPath = _join(destination.path, name);
+      if (entity is Directory) {
+        await _copyDirectoryContents(entity, Directory(targetPath));
+      } else if (entity is File) {
+        await entity.copy(targetPath);
+      }
+    }
+  }
+
+  Future<void> _deleteOwnedRoot(String root) async {
+    final directory = Directory(root);
+    if (!await directory.exists()) return;
+    final isDefault = _samePath(root, defaultApplicationDataPath);
+    final marker = File(_join(root, _storageMarkerName));
+    if (!isDefault && !await marker.exists()) {
+      throw const LocalServerException(
+        '拒绝清除未标记为 LocalLens 专用的数据目录，以避免误删其他文件。',
+      );
+    }
+    await directory.delete(recursive: true);
+  }
+
   Future<void> _ensureDirectories() async {
     for (final path in <String>[
       applicationDataPath,
@@ -465,6 +727,16 @@ class LocalServerSupervisor {
       File(pidPath).parent.path,
     ]) {
       await Directory(path).create(recursive: true);
+    }
+    final marker = File(storageMarkerPath);
+    if (!await marker.exists()) {
+      await marker.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
+          'owner': 'LocalLens',
+          'schema': 1,
+        }),
+        flush: true,
+      );
     }
   }
 
@@ -479,12 +751,42 @@ class LocalServerSupervisor {
     if (parts.length != 4 || parts.any((item) => item == null)) return false;
     final a = parts[0]!;
     final b = parts[1]!;
-    return a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168);
+    return a == 10 ||
+        (a == 172 && b >= 16 && b <= 31) ||
+        (a == 192 && b == 168);
+  }
+
+  bool _samePath(String first, String second) {
+    return _comparablePath(first) == _comparablePath(second);
+  }
+
+  bool _pathsOverlap(String first, String second) {
+    final a = _comparablePath(first);
+    final b = _comparablePath(second);
+    if (a == b) return true;
+    final separator = Platform.isWindows ? r'\' : '/';
+    return a.startsWith('$b$separator') || b.startsWith('$a$separator');
+  }
+
+  String _comparablePath(String path) {
+    var normalized = Directory(path).absolute.path.replaceAll('/', r'\');
+    normalized = normalized.replaceAll(RegExp(r'[\\/]+$'), '');
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  String _basename(String path) {
+    final normalized = path.replaceAll(RegExp(r'[\\/]+$'), '');
+    return normalized.split(RegExp(r'[\\/]')).last;
   }
 
   String _join(String first, String second, [String? third, String? fourth]) {
     final separator = Platform.pathSeparator;
-    return <String>[first, second, if (third != null) third, if (fourth != null) fourth]
+    return <String>[
+      first,
+      second,
+      if (third != null) third,
+      if (fourth != null) fourth,
+    ]
         .where((part) => part.isNotEmpty)
         .map((part) => part.replaceAll(RegExp(r'[\\/]+$'), ''))
         .join(separator);
