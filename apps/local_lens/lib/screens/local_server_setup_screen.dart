@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../models/local_server_config.dart';
 import '../models/server_settings.dart';
 import '../services/local_server_supervisor.dart';
 import '../widgets/app_components.dart';
+import '../widgets/local_library_editor.dart';
 
 class LocalServerSetupScreen extends StatefulWidget {
   const LocalServerSetupScreen({
@@ -25,10 +29,11 @@ class LocalServerSetupScreen extends StatefulWidget {
 class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _serverNameController = TextEditingController(text: 'LocalLens');
-  final _libraryNameController = TextEditingController(text: '媒体库');
-  final _mediaPathController = TextEditingController();
   final _dataPathController = TextEditingController();
   final _portController = TextEditingController(text: '9527');
+  List<LocalLibraryConfig> _libraries = const <LocalLibraryConfig>[
+    LocalLibraryConfig(id: 'main', name: '媒体库', path: ''),
+  ];
   bool _allowLan = true;
   bool _submitting = false;
   String? _error;
@@ -42,8 +47,6 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
   @override
   void dispose() {
     _serverNameController.dispose();
-    _libraryNameController.dispose();
-    _mediaPathController.dispose();
     _dataPathController.dispose();
     _portController.dispose();
     super.dispose();
@@ -57,7 +60,7 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 700),
+              constraints: const BoxConstraints(maxWidth: 760),
               child: AppSurface(
                 padding: const EdgeInsets.all(30),
                 radius: 20,
@@ -113,32 +116,25 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                         ),
                         validator: _required,
                       ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _libraryNameController,
-                        decoration: const InputDecoration(
-                          labelText: '媒体库名称',
-                          prefixIcon: Icon(LucideIcons.library, size: 19),
-                        ),
-                        validator: _required,
+                      const SizedBox(height: 22),
+                      Text(
+                        '媒体库',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _mediaPathController,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          labelText: '图片和视频目录',
-                          hintText: r'D:\Media',
-                          helperText: '只读取和索引原始媒体；重置 LocalLens 时不会删除这里的文件。',
-                          prefixIcon: const Icon(LucideIcons.images, size: 19),
-                          suffixIcon: TextButton(
-                            onPressed: _submitting ? null : _chooseMediaDirectory,
-                            child: const Text('选择目录'),
-                          ),
-                        ),
-                        validator: _required,
+                      const SizedBox(height: 4),
+                      Text(
+                        '可以添加多个图片或视频文件夹，每个目录独立显示和扫描。',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
+                      LocalLibraryEditor(
+                        libraries: _libraries,
+                        enabled: !_submitting,
+                        onChanged: (libraries) {
+                          setState(() => _libraries = libraries);
+                        },
+                      ),
+                      const SizedBox(height: 22),
                       TextFormField(
                         controller: _dataPathController,
                         readOnly: true,
@@ -247,12 +243,6 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
     return value == null || value.trim().isEmpty ? '此项不能为空' : null;
   }
 
-  Future<void> _chooseMediaDirectory() async {
-    final path = await getDirectoryPath();
-    if (path == null || !mounted) return;
-    setState(() => _mediaPathController.text = path);
-  }
-
   Future<void> _chooseDataDirectory() async {
     final path = await getDirectoryPath();
     if (path == null || !mounted) return;
@@ -268,14 +258,20 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
       _error = null;
     });
     try {
-      final config = await widget.supervisor.createDefaultConfig(
-        libraryPath: _mediaPathController.text.trim(),
+      _validateLibraryLayout();
+      final firstLibrary = _libraries.first;
+      final initialConfig = await widget.supervisor.createDefaultConfig(
+        libraryPath: firstLibrary.path.trim(),
         storageRoot: _dataPathController.text.trim(),
-        libraryName: _libraryNameController.text.trim(),
+        libraryName: firstLibrary.name.trim(),
         serverName: _serverNameController.text.trim(),
         allowLan: _allowLan,
         port: int.parse(_portController.text.trim()),
       );
+      final config = initialConfig.copyWith(
+        libraries: List<LocalLibraryConfig>.unmodifiable(_libraries),
+      );
+      await widget.supervisor.saveConfig(config);
       await widget.supervisor.start(config: config);
       await widget.onCompleted(ServerSettings(
         baseUrl: config.localBaseUrl,
@@ -287,6 +283,29 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  void _validateLibraryLayout() {
+    if (_libraries.isEmpty) {
+      throw const LocalServerException('至少需要一个媒体库');
+    }
+    final storage = _normalizedPath(_dataPathController.text);
+    for (final library in _libraries) {
+      final media = _normalizedPath(library.path);
+      if (storage == media ||
+          storage.startsWith('$media\\') ||
+          media.startsWith('$storage\\')) {
+        throw const LocalServerException(
+          'LocalLens 数据目录不能与任何媒体目录相同，也不能互相包含。',
+        );
+      }
+    }
+  }
+
+  String _normalizedPath(String path) {
+    var normalized = Directory(path).absolute.path.replaceAll('/', '\\');
+    normalized = normalized.replaceAll(RegExp(r'[\\/]+$'), '');
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 }
 
