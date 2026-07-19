@@ -1,0 +1,57 @@
+name: UI Analyze Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-lens-ui-analyze-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.9"
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Capture analyzer output
+        id: analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze > analysis.log 2>&1
+          code=$?
+          cat analysis.log
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload analyzer output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Flutter-Analyzer-Log
+          path: apps/local_lens/analysis.log
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Fail on analyzer issues
+        if: steps.analyze.outputs.code != '0'
+        shell: bash
+        run: exit 1
