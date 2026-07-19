@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
