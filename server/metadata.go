@@ -46,7 +46,7 @@ type ffprobeResult struct {
 
 func (a *App) extractAndStoreMetadata(ctx context.Context, item Media) error {
 	metadata := extractedMetadata{
-		CapturedAt: item.ModifiedAt,
+		CapturedAt:       item.ModifiedAt,
 		CapturedAtSource: "modified",
 	}
 	var extractionErrors []string
@@ -153,7 +153,9 @@ func (a *App) runFFprobe(ctx context.Context, path string) (ffprobeResult, error
 		"-of", "json",
 		path,
 	}
-	output, err := exec.CommandContext(ctx, a.cfg.FFprobePath, args...).CombinedOutput()
+	command := exec.CommandContext(ctx, a.cfg.FFprobePath, args...)
+	hideChildProcessWindow(command)
+	output, err := command.CombinedOutput()
 	if err != nil {
 		return ffprobeResult{}, fmt.Errorf("ffprobe: %w: %s", err, strings.TrimSpace(string(output)))
 	}
