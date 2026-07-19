@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../models/server_settings.dart';
 import '../services/api_client.dart';
+import '../services/local_server_supervisor.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_components.dart';
 import 'collections_screen.dart';
@@ -15,12 +16,14 @@ class LibraryScreen extends StatefulWidget {
     required this.settings,
     required this.onEditConnection,
     required this.onDisconnect,
+    this.localServerSupervisor,
     super.key,
   });
 
   final ServerSettings settings;
   final VoidCallback onEditConnection;
   final Future<void> Function() onDisconnect;
+  final LocalServerSupervisor? localServerSupervisor;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -28,7 +31,7 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   late final ApiClient _api = ApiClient(widget.settings);
-  late final List<Widget> _pages = [
+  late final List<Widget> _pages = <Widget>[
     TimelineScreen(api: _api),
     FolderBrowserScreen(api: _api),
     CollectionsScreen(api: _api),
@@ -58,6 +61,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         }
         return _MobileShell(
           index: _index,
+          settings: widget.settings,
           pages: _pages,
           onSelected: (value) => setState(() => _index = value),
           onEditConnection: widget.onEditConnection,
@@ -88,14 +92,15 @@ class _DesktopShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final sidebarColor = dark ? AppTheme.darkSidebar : AppTheme.lightSidebar;
-    final host = Uri.tryParse(settings.normalizedBaseUrl)?.host ?? settings.normalizedBaseUrl;
+    final host = Uri.tryParse(settings.normalizedBaseUrl)?.host ??
+        settings.normalizedBaseUrl;
+    final settingsLabel = settings.isLocal ? '本机服务器设置' : '连接设置';
 
     return Scaffold(
       body: Row(
         children: [
           AnimatedContainer(
             duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
             width: compact ? 82 : 238,
             decoration: BoxDecoration(
               color: sidebarColor,
@@ -107,15 +112,15 @@ class _DesktopShell extends StatelessWidget {
               child: Column(
                 children: [
                   Padding(
-                    padding: EdgeInsets.fromLTRB(compact ? 16 : 18, 18, compact ? 16 : 18, 14),
+                    padding: const EdgeInsets.all(16),
                     child: _Brand(compact: compact),
                   ),
-                  const SizedBox(height: 6),
                   Expanded(
                     child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                       itemCount: _destinations.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 5),
+                      separatorBuilder: (context, separatorIndex) =>
+                          const SizedBox(height: 5),
                       itemBuilder: (context, itemIndex) {
                         final item = _destinations[itemIndex];
                         return _SidebarDestination(
@@ -148,7 +153,7 @@ class _DesktopShell extends StatelessWidget {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    host,
+                                    settings.isLocal ? '本机服务 · $host' : host,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: Theme.of(context).textTheme.bodySmall,
@@ -160,8 +165,10 @@ class _DesktopShell extends StatelessWidget {
                         _SidebarDestination(
                           compact: compact,
                           selected: false,
-                          icon: LucideIcons.settings,
-                          label: '连接设置',
+                          icon: settings.isLocal
+                              ? LucideIcons.serverCog
+                              : LucideIcons.settings,
+                          label: settingsLabel,
                           onTap: onEditConnection,
                         ),
                       ],
@@ -191,22 +198,28 @@ class _DesktopShell extends StatelessWidget {
                       ),
                       const Spacer(),
                       AppStatusPill(
-                        label: '已连接 · $host',
-                        icon: LucideIcons.wifi,
+                        label: settings.isLocal
+                            ? '本机服务器运行中'
+                            : '已连接 · $host',
+                        icon: settings.isLocal
+                            ? LucideIcons.server
+                            : LucideIcons.wifi,
                         color: const Color(0xFF2B9B66),
                       ),
                       const SizedBox(width: 10),
                       IconButton(
-                        tooltip: '修改服务器连接',
+                        tooltip: settingsLabel,
                         onPressed: onEditConnection,
-                        icon: const Icon(LucideIcons.settings),
+                        icon: Icon(
+                          settings.isLocal
+                              ? LucideIcons.serverCog
+                              : LucideIcons.settings,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                Expanded(
-                  child: IndexedStack(index: index, children: pages),
-                ),
+                Expanded(child: IndexedStack(index: index, children: pages)),
               ],
             ),
           ),
@@ -219,12 +232,14 @@ class _DesktopShell extends StatelessWidget {
 class _MobileShell extends StatelessWidget {
   const _MobileShell({
     required this.index,
+    required this.settings,
     required this.pages,
     required this.onSelected,
     required this.onEditConnection,
   });
 
   final int index;
+  final ServerSettings settings;
   final List<Widget> pages;
   final ValueChanged<int> onSelected;
   final VoidCallback onEditConnection;
@@ -233,21 +248,15 @@ class _MobileShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 16,
-        title: Row(
-          children: [
-            const _BrandMark(size: 30),
-            const SizedBox(width: 10),
-            Text(_destinations[index].title),
-          ],
-        ),
+        title: Text(_destinations[index].title),
         actions: [
           IconButton(
-            tooltip: '修改服务器地址',
+            tooltip: settings.isLocal ? '本机服务器设置' : '修改服务器地址',
             onPressed: onEditConnection,
-            icon: const Icon(LucideIcons.settings),
+            icon: Icon(
+              settings.isLocal ? LucideIcons.serverCog : LucideIcons.settings,
+            ),
           ),
-          const SizedBox(width: 6),
         ],
       ),
       body: IndexedStack(index: index, children: pages),
@@ -258,7 +267,6 @@ class _MobileShell extends StatelessWidget {
           for (final item in _destinations)
             NavigationDestination(
               icon: Icon(item.icon, size: 21),
-              selectedIcon: Icon(item.icon, size: 22),
               label: item.label,
             ),
         ],
@@ -274,12 +282,23 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return const Center(child: _BrandMark(size: 42));
-    }
+    final mark = Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        LucideIcons.aperture,
+        color: Theme.of(context).colorScheme.onPrimary,
+      ),
+    );
+    if (compact) return Center(child: mark);
     return Row(
       children: [
-        const _BrandMark(size: 42),
+        mark,
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -288,47 +307,12 @@ class _Brand extends StatelessWidget {
               Text('LocalLens', style: Theme.of(context).textTheme.titleLarge),
               Text(
                 'Personal media space',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
           ),
         ),
       ],
-    );
-  }
-}
-
-class _BrandMark extends StatelessWidget {
-  const _BrandMark({required this.size});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF6976E8), Color(0xFF4956C8)],
-        ),
-        borderRadius: BorderRadius.circular(size * 0.3),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF5B67D8).withValues(alpha: 0.22),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
-          ),
-        ],
-      ),
-      alignment: Alignment.center,
-      child: Icon(LucideIcons.aperture, color: Colors.white, size: size * 0.54),
     );
   }
 }
@@ -358,32 +342,24 @@ class _SidebarDestination extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(11),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
+          child: Container(
             height: 44,
             padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 12),
             decoration: BoxDecoration(
-              color: selected ? scheme.primaryContainer.withValues(alpha: 0.78) : Colors.transparent,
+              color: selected
+                  ? scheme.primaryContainer.withValues(alpha: 0.78)
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(11),
             ),
             child: Row(
-              mainAxisAlignment: compact ? MainAxisAlignment.center : MainAxisAlignment.start,
+              mainAxisAlignment: compact
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
               children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: selected ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
-                ),
+                Icon(icon, size: 20),
                 if (!compact) ...[
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: selected ? scheme.onPrimaryContainer : scheme.onSurface,
-                          ),
-                    ),
-                  ),
+                  Expanded(child: Text(label)),
                 ],
               ],
             ),
@@ -395,20 +371,16 @@ class _SidebarDestination extends StatelessWidget {
 }
 
 class _DestinationData {
-  const _DestinationData({
-    required this.label,
-    required this.title,
-    required this.icon,
-  });
+  const _DestinationData(this.label, this.title, this.icon);
 
   final String label;
   final String title;
   final IconData icon;
 }
 
-const _destinations = [
-  _DestinationData(label: '时间线', title: '拍摄时间线', icon: LucideIcons.history),
-  _DestinationData(label: '目录', title: '物理目录', icon: LucideIcons.folder),
-  _DestinationData(label: '集合', title: '相册与标签', icon: LucideIcons.images),
-  _DestinationData(label: '服务器', title: '服务器与设备', icon: LucideIcons.server),
+const _destinations = <_DestinationData>[
+  _DestinationData('时间线', '拍摄时间线', LucideIcons.history),
+  _DestinationData('目录', '物理目录', LucideIcons.folder),
+  _DestinationData('集合', '相册与标签', LucideIcons.images),
+  _DestinationData('服务器', '服务器与设备', LucideIcons.server),
 ];
