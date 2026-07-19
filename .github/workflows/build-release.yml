@@ -45,10 +45,8 @@ jobs:
             server/go.mod
             server/go.sum
 
-      - name: Resolve and download dependencies
-        run: |
-          go mod tidy
-          go mod download
+      - name: Download dependencies
+        run: go mod download
 
       - name: Test server
         run: go test ./...
@@ -91,12 +89,12 @@ jobs:
           3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when video transcoding is needed.
           4. Start LocalLensServer.exe -config .\config.json.
 
-          LocalLensServerEmbedded.exe is the no-console runtime used by the unified
-          Windows application. Most users should download LocalLens-Windows-x64.zip
-          instead of starting this file manually.
+          LocalLensServerEmbedded.exe is used by the unified Windows application.
+          Ordinary Windows users should download LocalLens-Windows-x64.zip.
           "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+          $zipPath = Join-Path $PWD "dist/$packageName.zip"
+          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -Force
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7
@@ -168,8 +166,30 @@ jobs:
           $ErrorActionPreference = "Stop"
           $packageName = "LocalLens-Windows-x64"
           $packageDir = Join-Path $PWD "dist/$packageName"
+          $releaseDir = Join-Path $PWD "build/windows/x64/runner/Release"
+
+          if (-not (Test-Path $releaseDir)) {
+            throw "Flutter Windows release directory was not generated: $releaseDir"
+          }
+
+          if (Test-Path $packageDir) {
+            Remove-Item $packageDir -Recurse -Force
+          }
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
+          Copy-Item "$releaseDir\*" $packageDir -Recurse -Force
+
+          # Flutter derives the executable from the Dart project name and normally
+          # produces local_lens.exe. The public bundle contract uses LocalLens.exe.
+          $clientExe = Get-ChildItem $packageDir -File -Filter "*.exe" |
+            Where-Object { $_.Name -notlike "LocalLensServer*" } |
+            Select-Object -First 1
+          if (-not $clientExe) {
+            throw "Flutter build output does not contain a desktop executable"
+          }
+          $normalizedClientExe = Join-Path $packageDir "LocalLens.exe"
+          if ($clientExe.FullName -ne $normalizedClientExe) {
+            Move-Item -Path $clientExe.FullName -Destination $normalizedClientExe -Force
+          }
 
           $version = "0.6.1"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
@@ -183,12 +203,17 @@ jobs:
           if (-not $serverZip) {
             throw "Embedded server artifact zip was not found"
           }
+
           $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
           if (Test-Path $serverExtractDir) {
             Remove-Item $serverExtractDir -Recurse -Force
           }
           Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
-          $embeddedServer = Get-ChildItem $serverExtractDir -Filter "LocalLensServerEmbedded.exe" -Recurse | Select-Object -First 1
+
+          $embeddedServer = Get-ChildItem $serverExtractDir `
+            -Filter "LocalLensServerEmbedded.exe" `
+            -Recurse |
+            Select-Object -First 1
           if (-not $embeddedServer) {
             throw "LocalLensServerEmbedded.exe was not found in server artifact"
           }
@@ -204,8 +229,7 @@ jobs:
 
           Put ffmpeg.exe and ffprobe.exe in this directory to enable video
           thumbnails, broad metadata compatibility and HLS transcoding.
-          The LocalLens application detects these files when it creates local config.
-          The embedded Go server itself is already included and does not require FFmpeg.
+          The embedded Go server is already included and does not require FFmpeg.
           "@ | Set-Content -Path (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
 
           $manifest = [ordered]@{
@@ -214,6 +238,7 @@ jobs:
             server_version = $version
             source_commit = $env:GITHUB_SHA
             build_number = $env:GITHUB_RUN_NUMBER
+            client_executable = "LocalLens.exe"
             embedded_server = "runtime/LocalLensServer.exe"
             built_at_utc = (Get-Date).ToUniversalTime().ToString("o")
           }
@@ -225,15 +250,14 @@ jobs:
           LocalLens Windows $version
           ==========================
 
-          This is the unified Windows package. Launch LocalLens.exe only. The
-          application creates local configuration, starts runtime\LocalLensServer.exe
-          without a console window and connects through 127.0.0.1.
-
+          This is the unified Windows package. Launch LocalLens.exe only.
+          It starts runtime\LocalLensServer.exe and connects through 127.0.0.1.
           Server data is stored under %LOCALAPPDATA%\LocalLens.
           "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           $requiredFiles = @(
             (Join-Path $packageDir "LocalLens.exe"),
+            (Join-Path $packageDir "flutter_windows.dll"),
             (Join-Path $packageDir "runtime/LocalLensServer.exe"),
             (Join-Path $packageDir "runtime/media-tools/README.txt"),
             (Join-Path $packageDir "BUNDLE-MANIFEST.json")
@@ -244,7 +268,8 @@ jobs:
             }
           }
 
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+          $zipPath = Join-Path $PWD "dist/$packageName.zip"
+          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -Force
 
       - name: Smoke test final Windows zip
         shell: pwsh
@@ -253,27 +278,26 @@ jobs:
           $packageName = "LocalLens-Windows-x64"
           $zipPath = Join-Path $PWD "dist/$packageName.zip"
           $smokeRoot = Join-Path $env:RUNNER_TEMP "local-lens-unified-smoke"
+
           if (Test-Path $smokeRoot) {
             Remove-Item $smokeRoot -Recurse -Force
           }
           New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
           Expand-Archive -Path $zipPath -DestinationPath $smokeRoot -Force
 
-          $bundleDir = Join-Path $smokeRoot $packageName
-          if (-not (Test-Path (Join-Path $bundleDir "LocalLens.exe"))) {
-            $bundleDir = $smokeRoot
-          }
-
-          $serverPath = Join-Path $bundleDir "runtime/LocalLensServer.exe"
-          $manifestPath = Join-Path $bundleDir "BUNDLE-MANIFEST.json"
-          if (-not (Test-Path $serverPath)) {
-            throw "Final zip does not contain runtime/LocalLensServer.exe"
-          }
-          if (-not (Test-Path $manifestPath)) {
-            throw "Final zip does not contain BUNDLE-MANIFEST.json"
+          $clientPath = Join-Path $smokeRoot "LocalLens.exe"
+          $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
+          $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
+          foreach ($requiredPath in @($clientPath, $serverPath, $manifestPath)) {
+            if (-not (Test-Path $requiredPath)) {
+              throw "Final Windows zip is missing $requiredPath"
+            }
           }
 
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.client_executable -ne "LocalLens.exe") {
+            throw "Bundle manifest does not describe LocalLens.exe"
+          }
           if ($manifest.embedded_server -ne "runtime/LocalLensServer.exe") {
             throw "Bundle manifest does not describe the embedded server"
           }
@@ -281,7 +305,8 @@ jobs:
           $port = 19527
           $dataDir = Join-Path $smokeRoot "server-data"
           $mediaDir = Join-Path $smokeRoot "media"
-          New-Item -ItemType Directory -Force -Path $dataDir, $mediaDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
           $configPath = Join-Path $smokeRoot "server-smoke.json"
           $config = [ordered]@{
             listen_address = "127.0.0.1:$port"
@@ -316,7 +341,7 @@ jobs:
             $process = Start-Process `
               -FilePath $serverPath `
               -ArgumentList @("-config", $configPath) `
-              -WorkingDirectory $bundleDir `
+              -WorkingDirectory $smokeRoot `
               -PassThru
 
             $healthy = $false
@@ -401,7 +426,11 @@ jobs:
               if permission not in text:
                   text = text.replace(marker, marker + "\n    " + permission, 1)
           if 'android:usesCleartextTraffic="true"' not in text:
-              text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+              text = text.replace(
+                  "<application",
+                  '<application android:usesCleartextTraffic="true"',
+                  1,
+              )
           manifest.write_text(text, encoding="utf-8")
           PY
 
