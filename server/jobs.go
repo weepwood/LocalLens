@@ -358,7 +358,9 @@ func (a *App) generateThumbnail(ctx context.Context, item Media, width int) erro
 		args = append(args, "-ss", position)
 	}
 	args = append(args, "-i", item.Path(), "-frames:v", "1", "-vf", "scale="+strconv.Itoa(width)+":-2", "-q:v", "4", "-y", tempPath)
-	if output, err := exec.CommandContext(ctx, a.cfg.FFmpegPath, args...).CombinedOutput(); err != nil {
+	command := exec.CommandContext(ctx, a.cfg.FFmpegPath, args...)
+	hideChildProcessWindow(command)
+	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	if err := os.Rename(tempPath, path); err != nil {
