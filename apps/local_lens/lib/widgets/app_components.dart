@@ -8,19 +8,22 @@ class AppPageHeader extends StatelessWidget {
     required this.title,
     this.description,
     this.icon,
+    this.eyebrow,
     this.actions = const [],
-    this.padding = const EdgeInsets.fromLTRB(24, 22, 24, 12),
+    this.padding = const EdgeInsets.fromLTRB(24, 22, 24, 14),
     super.key,
   });
 
   final String title;
   final String? description;
   final IconData? icon;
+  final String? eyebrow;
   final List<Widget> actions;
   final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: padding,
       child: LayoutBuilder(
@@ -31,28 +34,51 @@ class AppPageHeader extends StatelessWidget {
             children: [
               if (icon != null) ...[
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(12),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        scheme.primaryContainer,
+                        scheme.primaryContainer.withValues(alpha: 0.58),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(
+                      color: scheme.primary.withValues(alpha: 0.12),
+                    ),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(icon, size: 21),
+                  child: Icon(icon, size: 21, color: scheme.primary),
                 ),
-                const SizedBox(width: 13),
+                const SizedBox(width: 14),
               ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: Theme.of(context).textTheme.headlineSmall),
+                    if (eyebrow != null) ...[
+                      Text(
+                        eyebrow!,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: scheme.primary,
+                              letterSpacing: 0.4,
+                            ),
+                      ),
+                      const SizedBox(height: 3),
+                    ],
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
                     if (description != null) ...[
                       const SizedBox(height: 5),
                       Text(
                         description!,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: scheme.onSurfaceVariant,
                             ),
                       ),
                     ],
@@ -73,7 +99,7 @@ class AppPageHeader extends StatelessWidget {
             );
           }
           return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(child: titleBlock),
               const SizedBox(width: 24),
@@ -94,6 +120,7 @@ class AppSurface extends StatelessWidget {
     this.backgroundColor,
     this.radius = AppTheme.radius,
     this.clipBehavior = Clip.antiAlias,
+    this.emphasized = false,
     super.key,
   });
 
@@ -103,19 +130,62 @@ class AppSurface extends StatelessWidget {
   final Color? backgroundColor;
   final double radius;
   final Clip clipBehavior;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: margin,
       child: ShadCard(
         padding: padding,
         radius: BorderRadius.circular(radius),
-        backgroundColor: backgroundColor,
+        backgroundColor: backgroundColor ??
+            (emphasized ? scheme.surfaceContainerLowest : scheme.surface),
         clipBehavior: clipBehavior,
-        shadows: const [],
+        shadows: emphasized
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: Theme.of(context).brightness == Brightness.dark
+                        ? 0.24
+                        : 0.055,
+                  ),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8),
+                ),
+              ]
+            : const [],
         child: child,
       ),
+    );
+  }
+}
+
+class AppToolbarSurface extends StatelessWidget {
+  const AppToolbarSurface({
+    required this.child,
+    this.padding = const EdgeInsets.all(12),
+    this.margin = EdgeInsets.zero,
+    super.key,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: child,
     );
   }
 }
@@ -178,15 +248,30 @@ class AppStatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: effective.withValues(alpha: 0.1),
+        color: effective.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: effective.withValues(alpha: 0.22)),
+        border: Border.all(color: effective.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: effective,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: effective.withValues(alpha: 0.35),
+                  blurRadius: 5,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 7),
           Icon(icon, size: 13, color: effective),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           Text(
             label,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -216,42 +301,51 @@ class AppEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
+          constraints: const BoxConstraints(maxWidth: 460),
           child: AppSurface(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            emphasized: true,
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 58,
-                  height: 58,
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(18),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        scheme.primaryContainer,
+                        scheme.surfaceContainerHighest,
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(icon, size: 28),
+                  child: Icon(icon, size: 29, color: scheme.primary),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 Text(
                   title,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                const SizedBox(height: 7),
+                const SizedBox(height: 8),
                 Text(
                   description,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: scheme.onSurfaceVariant,
                       ),
                 ),
                 if (action != null) ...[
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 20),
                   action!,
                 ],
               ],

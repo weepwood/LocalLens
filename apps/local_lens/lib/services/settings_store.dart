@@ -22,6 +22,12 @@ class SettingsStore {
     return ServerSettings(baseUrl: baseUrl, token: token, mode: mode);
   }
 
+  Future<bool> hasExplicitMode() async {
+    final storedMode = await _preferences.getString(_modeKey);
+    return storedMode == ServerConnectionMode.local.name ||
+        storedMode == ServerConnectionMode.remote.name;
+  }
+
   Future<void> save(ServerSettings settings) async {
     await _preferences.setString(_baseUrlKey, settings.normalizedBaseUrl);
     await _preferences.setString(_tokenKey, settings.token);

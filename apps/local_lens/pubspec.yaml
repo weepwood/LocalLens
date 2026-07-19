@@ -1,7 +1,7 @@
 name: local_lens
-description: LocalLens Flutter client for the LocalLens Go media server.
+description: LocalLens unified Windows media application and cross-platform client.
 publish_to: none
-version: 0.6.0+8
+version: 0.6.1+9
 
 environment:
   sdk: ">=3.7.0 <4.0.0"

@@ -8,7 +8,10 @@ import '../models/local_server_config.dart';
 import '../models/server_runtime_state.dart';
 import '../models/server_settings.dart';
 import '../services/local_server_supervisor.dart';
+import '../services/settings_store.dart';
 import '../widgets/app_components.dart';
+import '../widgets/local_library_editor.dart';
+import 'local_server_setup_screen.dart';
 
 class LocalServerSettingsScreen extends StatefulWidget {
   const LocalServerSettingsScreen({
@@ -31,14 +34,17 @@ class _LocalServerSettingsScreenState
     extends State<LocalServerSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final _serverNameController = TextEditingController();
-  final _libraryNameController = TextEditingController();
-  final _libraryPathController = TextEditingController();
+  final _dataPathController = TextEditingController();
   final _portController = TextEditingController();
   final _cacheController = TextEditingController();
+  final SettingsStore _settingsStore = SettingsStore();
 
   LocalServerConfig? _config;
+  List<LocalLibraryConfig> _libraries = const <LocalLibraryConfig>[];
   bool _loading = true;
   bool _saving = false;
+  bool _resetting = false;
+  bool _resetComplete = false;
   bool _allowLan = true;
   bool _autoScan = true;
   bool _watchFiles = true;
@@ -47,6 +53,8 @@ class _LocalServerSettingsScreenState
   int _transcodeWorkers = 1;
   String _transcodeHardware = 'software';
   String? _error;
+
+  bool get _busy => _saving || _resetting;
 
   @override
   void initState() {
@@ -57,8 +65,7 @@ class _LocalServerSettingsScreenState
   @override
   void dispose() {
     _serverNameController.dispose();
-    _libraryNameController.dispose();
-    _libraryPathController.dispose();
+    _dataPathController.dispose();
     _portController.dispose();
     _cacheController.dispose();
     super.dispose();
@@ -70,13 +77,12 @@ class _LocalServerSettingsScreenState
       if (config == null) {
         throw const LocalServerException('本地服务器配置不存在');
       }
-      final library = config.libraries.first;
       if (!mounted) return;
       setState(() {
         _config = config;
+        _libraries = List<LocalLibraryConfig>.of(config.libraries);
         _serverNameController.text = config.serverName;
-        _libraryNameController.text = library.name;
-        _libraryPathController.text = library.path;
+        _dataPathController.text = widget.supervisor.applicationDataPath;
         _portController.text = '${config.port}';
         _cacheController.text = '${config.transcodeCacheGB}';
         _allowLan = config.allowLan;
@@ -99,6 +105,12 @@ class _LocalServerSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (_resetComplete) {
+      return LocalServerSetupScreen(
+        supervisor: widget.supervisor,
+        onCompleted: widget.onSaved,
+      );
+    }
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -107,12 +119,12 @@ class _LocalServerSettingsScreenState
         title: const Text('本机服务器设置'),
         leading: IconButton(
           tooltip: '返回',
-          onPressed: _saving ? null : widget.onClose,
+          onPressed: _busy ? null : widget.onClose,
           icon: const Icon(LucideIcons.arrowLeft),
         ),
         actions: [
           TextButton.icon(
-            onPressed: _saving ? null : _save,
+            onPressed: _busy ? null : _save,
             icon: _saving
                 ? const SizedBox.square(
                     dimension: 16,
@@ -139,12 +151,14 @@ class _LocalServerSettingsScreenState
                 children: [
                   TextFormField(
                     controller: _serverNameController,
+                    enabled: !_busy,
                     decoration: const InputDecoration(labelText: '服务器名称'),
                     validator: _required,
                   ),
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _portController,
+                    enabled: !_busy,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: '服务端口',
@@ -160,7 +174,7 @@ class _LocalServerSettingsScreenState
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     value: _allowLan,
-                    onChanged: _saving
+                    onChanged: _busy
                         ? null
                         : (value) => setState(() => _allowLan = value),
                     title: const Text('允许手机和局域网设备访问'),
@@ -172,43 +186,86 @@ class _LocalServerSettingsScreenState
             const SizedBox(height: 16),
             _Section(
               title: '媒体库',
-              description: '管理主媒体库目录和自动扫描策略。',
+              description: '可以添加多个图片或视频文件夹，并分别设置扫描方式。',
               icon: LucideIcons.library,
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextFormField(
-                    controller: _libraryNameController,
-                    decoration: const InputDecoration(labelText: '媒体库名称'),
-                    validator: _required,
+                  LocalLibraryEditor(
+                    libraries: _libraries,
+                    enabled: !_busy,
+                    compact: true,
+                    onChanged: (libraries) {
+                      setState(() => _libraries = libraries);
+                    },
                   ),
                   const SizedBox(height: 14),
-                  TextFormField(
-                    controller: _libraryPathController,
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      labelText: '媒体目录',
-                      suffixIcon: TextButton(
-                        onPressed: _saving ? null : _chooseDirectory,
-                        child: const Text('更换目录'),
-                      ),
-                    ),
-                    validator: _required,
-                  ),
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     value: _autoScan,
-                    onChanged: _saving
+                    onChanged: _busy
                         ? null
                         : (value) => setState(() => _autoScan = value),
                     title: const Text('启动时自动扫描'),
+                    subtitle: const Text('服务启动后校验全部已启用媒体库。'),
                   ),
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     value: _watchFiles,
-                    onChanged: _saving
+                    onChanged: _busy
                         ? null
                         : (value) => setState(() => _watchFiles = value),
                     title: const Text('实时监听文件变化'),
+                    subtitle: const Text('监听新增、修改、移动和删除事件。'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _Section(
+              title: '数据存储',
+              description: '配置、数据库、缩略图、缓存和日志统一保存在此目录。',
+              icon: LucideIcons.database,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    controller: _dataPathController,
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      labelText: 'LocalLens 数据目录',
+                      helperText: '修改后会停止服务并迁移现有数据，然后重新启动。',
+                      suffixIcon: TextButton(
+                        onPressed: _busy ? null : _chooseDataDirectory,
+                        child: const Text('迁移目录'),
+                      ),
+                    ),
+                    validator: _required,
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => unawaited(
+                                  widget.supervisor.openDataDirectory(),
+                                ),
+                        icon: const Icon(LucideIcons.folderOpen, size: 17),
+                        label: const Text('打开数据目录'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => unawaited(
+                                  widget.supervisor.openLogDirectory(),
+                                ),
+                        icon: const Icon(LucideIcons.fileText, size: 17),
+                        label: const Text('打开日志目录'),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -224,7 +281,7 @@ class _LocalServerSettingsScreenState
                     label: '缩略图 Worker',
                     value: _thumbnailWorkers,
                     max: 8,
-                    enabled: !_saving,
+                    enabled: !_busy,
                     onChanged: (value) =>
                         setState(() => _thumbnailWorkers = value),
                   ),
@@ -232,7 +289,7 @@ class _LocalServerSettingsScreenState
                     label: '元数据 Worker',
                     value: _metadataWorkers,
                     max: 8,
-                    enabled: !_saving,
+                    enabled: !_busy,
                     onChanged: (value) =>
                         setState(() => _metadataWorkers = value),
                   ),
@@ -240,7 +297,7 @@ class _LocalServerSettingsScreenState
                     label: '视频转码 Worker',
                     value: _transcodeWorkers,
                     max: 4,
-                    enabled: !_saving,
+                    enabled: !_busy,
                     onChanged: (value) =>
                         setState(() => _transcodeWorkers = value),
                   ),
@@ -249,8 +306,8 @@ class _LocalServerSettingsScreenState
             ),
             const SizedBox(height: 16),
             _Section(
-              title: '视频转码',
-              description: '选择转码方式并限制 HLS 缓存空间。',
+              title: '视频处理',
+              description: 'Windows 安装包内置 FFmpeg 和 FFprobe。',
               icon: LucideIcons.clapperboard,
               child: Column(
                 children: [
@@ -275,7 +332,7 @@ class _LocalServerSettingsScreenState
                         child: Text('AMD AMF'),
                       ),
                     ],
-                    onChanged: _saving
+                    onChanged: _busy
                         ? null
                         : (value) => setState(
                               () => _transcodeHardware = value ?? 'software',
@@ -284,6 +341,7 @@ class _LocalServerSettingsScreenState
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _cacheController,
+                    enabled: !_busy,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: '转码缓存上限（GB）',
@@ -300,19 +358,19 @@ class _LocalServerSettingsScreenState
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(
-                      _config?.ffmpegPath.isNotEmpty == true
+                      widget.supervisor.hasBundledFFmpeg
                           ? LucideIcons.circleCheck
                           : LucideIcons.circleAlert,
                     ),
                     title: Text(
-                      _config?.ffmpegPath.isNotEmpty == true
-                          ? 'FFmpeg 已配置'
-                          : 'FFmpeg 未安装',
+                      widget.supervisor.hasBundledFFmpeg
+                          ? 'FFmpeg 已内置且后台运行'
+                          : '安装包缺少 FFmpeg',
                     ),
                     subtitle: Text(
-                      _config?.ffmpegPath.isNotEmpty == true
-                          ? _config!.ffmpegPath
-                          : r'将 ffmpeg.exe 和 ffprobe.exe 放入 runtime\media-tools。',
+                      widget.supervisor.hasBundledFFmpeg
+                          ? '缩略图和元数据任务不会再弹出终端窗口。\n${widget.supervisor.bundledFFmpegPath}'
+                          : '请重新下载并完整解压 LocalLens-Windows-x64.zip。',
                     ),
                   ),
                 ],
@@ -331,9 +389,37 @@ class _LocalServerSettingsScreenState
             ],
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: _saving ? null : _save,
+              onPressed: _busy ? null : _save,
               icon: const Icon(LucideIcons.save, size: 18),
-              label: const Text('保存配置并重启本机服务器'),
+              label: Text(_saving ? '正在保存和重启…' : '保存配置并重启本机服务器'),
+            ),
+            const SizedBox(height: 16),
+            _Section(
+              title: '恢复默认',
+              description: '用于重新初始化索引、缓存和本机服务配置。',
+              icon: LucideIcons.triangleAlert,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '该操作会删除 LocalLens 的配置、SQLite 索引、缩略图、转码缓存和日志，并返回首次设置页面。不会删除媒体目录中的原始图片和视频。',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _confirmReset,
+                    icon: _resetting
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(LucideIcons.trash2, size: 18),
+                    label: Text(
+                      _resetting ? '正在清除数据…' : '清除 LocalLens 数据并恢复默认',
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 32),
           ],
@@ -394,7 +480,7 @@ class _LocalServerSettingsScreenState
                 runSpacing: 10,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: state.isBusy
+                    onPressed: state.isBusy || _busy
                         ? null
                         : () {
                             if (state.isRunning) {
@@ -410,25 +496,11 @@ class _LocalServerSettingsScreenState
                     label: Text(state.isRunning ? '停止' : '启动'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: state.isBusy
+                    onPressed: state.isBusy || _busy
                         ? null
                         : () => unawaited(widget.supervisor.restart()),
                     icon: const Icon(LucideIcons.refreshCw, size: 17),
                     label: const Text('重启'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => unawaited(
-                      widget.supervisor.openDataDirectory(),
-                    ),
-                    icon: const Icon(LucideIcons.folderOpen, size: 17),
-                    label: const Text('数据目录'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => unawaited(
-                      widget.supervisor.openLogDirectory(),
-                    ),
-                    icon: const Icon(LucideIcons.fileText, size: 17),
-                    label: const Text('日志目录'),
                   ),
                 ],
               ),
@@ -439,14 +511,20 @@ class _LocalServerSettingsScreenState
     );
   }
 
-  Future<void> _chooseDirectory() async {
+  Future<void> _chooseDataDirectory() async {
     final path = await getDirectoryPath();
     if (path == null || !mounted) return;
-    setState(() => _libraryPathController.text = path);
+    setState(() {
+      _dataPathController.text = widget.supervisor.resolveStorageRoot(path);
+    });
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate() || _config == null) return;
+    if (_libraries.isEmpty) {
+      setState(() => _error = '至少需要一个媒体库');
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
@@ -455,7 +533,6 @@ class _LocalServerSettingsScreenState
       final port = int.parse(_portController.text.trim());
       final lanAddress =
           _allowLan ? await widget.supervisor.discoverLanIPv4() : null;
-      final currentLibrary = _config!.libraries.first;
       final config = _config!.copyWith(
         serverName: _serverNameController.text.trim(),
         listenAddress: '${_allowLan ? '0.0.0.0' : '127.0.0.1'}:$port',
@@ -467,24 +544,72 @@ class _LocalServerSettingsScreenState
         transcodeWorkers: _transcodeWorkers,
         transcodeCacheGB: int.parse(_cacheController.text.trim()),
         transcodeHardware: _transcodeHardware,
-        libraries: <LocalLibraryConfig>[
-          currentLibrary.copyWith(
-            name: _libraryNameController.text.trim(),
-            path: _libraryPathController.text.trim(),
-          ),
-        ],
+        libraries: List<LocalLibraryConfig>.unmodifiable(_libraries),
       );
-      final settings = await widget.supervisor.applyConfig(config);
+      final settings = await widget.supervisor.applyConfig(
+        config,
+        storageRoot: _dataPathController.text.trim(),
+      );
       await widget.onSaved(settings);
+      final updated = await widget.supervisor.loadConfig();
       if (!mounted) return;
-      setState(() => _config = config);
+      setState(() {
+        _config = updated ?? config;
+        _libraries = List<LocalLibraryConfig>.of(
+          (updated ?? config).libraries,
+        );
+        _dataPathController.text = widget.supervisor.applicationDataPath;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('本机服务器配置已保存并重启')),
+        SnackBar(content: Text('已保存 ${_libraries.length} 个媒体库并重启服务')),
       );
     } on Object catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _confirmReset() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清除 LocalLens 数据？'),
+        content: const Text(
+          '将删除本机配置、数据库索引、缩略图、缓存和日志，并返回首次设置页面。媒体目录中的原始图片和视频不会被删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('确认清除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _resetting = true;
+      _error = null;
+    });
+    try {
+      await widget.supervisor.clearDataAndRestoreDefaults();
+      await _settingsStore.clear();
+      if (!mounted) return;
+      setState(() {
+        _resetComplete = true;
+        _resetting = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _resetting = false;
+        _error = error.toString();
+      });
     }
   }
 

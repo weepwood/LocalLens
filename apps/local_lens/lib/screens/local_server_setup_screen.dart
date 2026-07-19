@@ -1,22 +1,26 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../models/local_server_config.dart';
 import '../models/server_settings.dart';
 import '../services/local_server_supervisor.dart';
 import '../widgets/app_components.dart';
+import '../widgets/local_library_editor.dart';
 
 class LocalServerSetupScreen extends StatefulWidget {
   const LocalServerSetupScreen({
     required this.supervisor,
     required this.onCompleted,
-    required this.onUseRemote,
+    this.onUseRemote,
     super.key,
   });
 
   final LocalServerSupervisor supervisor;
   final Future<void> Function(ServerSettings settings) onCompleted;
-  final VoidCallback onUseRemote;
+  final VoidCallback? onUseRemote;
 
   @override
   State<LocalServerSetupScreen> createState() => _LocalServerSetupScreenState();
@@ -25,18 +29,25 @@ class LocalServerSetupScreen extends StatefulWidget {
 class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _serverNameController = TextEditingController(text: 'LocalLens');
-  final _libraryNameController = TextEditingController(text: '媒体库');
-  final _pathController = TextEditingController();
+  final _dataPathController = TextEditingController();
   final _portController = TextEditingController(text: '9527');
+  List<LocalLibraryConfig> _libraries = const <LocalLibraryConfig>[
+    LocalLibraryConfig(id: 'main', name: '媒体库', path: ''),
+  ];
   bool _allowLan = true;
   bool _submitting = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _dataPathController.text = widget.supervisor.defaultApplicationDataPath;
+  }
+
+  @override
   void dispose() {
     _serverNameController.dispose();
-    _libraryNameController.dispose();
-    _pathController.dispose();
+    _dataPathController.dispose();
     _portController.dispose();
     super.dispose();
   }
@@ -49,7 +60,7 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 680),
+              constraints: const BoxConstraints(maxWidth: 760),
               child: AppSurface(
                 padding: const EdgeInsets.all(30),
                 radius: 20,
@@ -81,9 +92,14 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Windows 客户端会自动运行内置服务器，不再需要单独启动服务端程序。',
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  'Windows 应用会自动运行内置服务端和 FFmpeg，无需另外安装。',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
                                       ),
                                 ),
                               ],
@@ -98,37 +114,45 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                           labelText: '服务器名称',
                           prefixIcon: Icon(LucideIcons.monitorCog, size: 19),
                         ),
-                        validator: (value) => value == null || value.trim().isEmpty
-                            ? '请输入服务器名称'
-                            : null,
+                        validator: _required,
                       ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _libraryNameController,
-                        decoration: const InputDecoration(
-                          labelText: '媒体库名称',
-                          prefixIcon: Icon(LucideIcons.library, size: 19),
-                        ),
-                        validator: (value) => value == null || value.trim().isEmpty
-                            ? '请输入媒体库名称'
-                            : null,
+                      const SizedBox(height: 22),
+                      Text(
+                        '媒体库',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 4),
+                      Text(
+                        '可以添加多个图片或视频文件夹，每个目录独立显示和扫描。',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      LocalLibraryEditor(
+                        libraries: _libraries,
+                        enabled: !_submitting,
+                        onChanged: (libraries) {
+                          setState(() => _libraries = libraries);
+                        },
+                      ),
+                      const SizedBox(height: 22),
                       TextFormField(
-                        controller: _pathController,
+                        controller: _dataPathController,
                         readOnly: true,
                         decoration: InputDecoration(
-                          labelText: '图片和视频目录',
-                          hintText: r'D:\Media',
-                          prefixIcon: const Icon(LucideIcons.folderOpen, size: 19),
+                          labelText: 'LocalLens 数据目录',
+                          helperText: '保存配置、SQLite 数据库、缩略图、转码缓存和日志。',
+                          prefixIcon: const Icon(LucideIcons.database, size: 19),
                           suffixIcon: TextButton(
-                            onPressed: _submitting ? null : _chooseDirectory,
-                            child: const Text('选择目录'),
+                            onPressed: _submitting ? null : _chooseDataDirectory,
+                            child: const Text('更换目录'),
                           ),
                         ),
-                        validator: (value) => value == null || value.trim().isEmpty
-                            ? '请选择媒体目录'
-                            : null,
+                        validator: _required,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '选择上级目录后，LocalLens 会创建独立的 LocalLensData 子目录，避免清理数据时影响其他文件。',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 16),
                       TextFormField(
@@ -155,14 +179,24 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                             ? null
                             : (value) => setState(() => _allowLan = value),
                         title: const Text('允许手机和局域网设备访问'),
-                        subtitle: const Text('开启后监听局域网；本机客户端仍通过 127.0.0.1 安全连接。'),
+                        subtitle: const Text(
+                          '开启后监听局域网；本机客户端仍通过 127.0.0.1 连接。',
+                        ),
                         secondary: const Icon(LucideIcons.smartphone),
                       ),
                       if (!widget.supervisor.hasBundledServer) ...[
                         const SizedBox(height: 14),
-                        _MessagePanel(
+                        const _MessagePanel(
                           error: true,
-                          message: '当前安装目录没有找到内置服务器。请使用新版统一 Windows 安装包。',
+                          message:
+                              '当前目录不是完整的一体化安装包：缺少 runtime\\LocalLensServer.exe。请重新下载 LocalLens-Windows-x64.zip 并完整解压。',
+                        ),
+                      ] else if (!widget.supervisor.hasBundledFFmpeg) ...[
+                        const SizedBox(height: 14),
+                        const _MessagePanel(
+                          error: true,
+                          message:
+                              '安装包缺少内置 FFmpeg。视频缩略图、元数据和转码功能可能不可用，请重新下载安装包。',
                         ),
                       ],
                       if (_error != null) ...[
@@ -171,7 +205,9 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                       ],
                       const SizedBox(height: 24),
                       FilledButton.icon(
-                        onPressed: _submitting || !widget.supervisor.hasBundledServer
+                        onPressed: _submitting ||
+                                !widget.supervisor.hasBundledServer ||
+                                !widget.supervisor.hasBundledFFmpeg
                             ? null
                             : _submit,
                         icon: _submitting
@@ -180,20 +216,18 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(LucideIcons.play, size: 18),
-                        label: Text(_submitting ? '正在启动本机服务器…' : '创建媒体库并启动'),
+                        label: Text(
+                          _submitting ? '正在创建并启动…' : '创建媒体库并启动',
+                        ),
                       ),
-                      const SizedBox(height: 10),
-                      TextButton.icon(
-                        onPressed: _submitting ? null : widget.onUseRemote,
-                        icon: const Icon(LucideIcons.link, size: 18),
-                        label: const Text('改为连接另一台 LocalLens 服务器'),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '配置、数据库、缓存和日志将保存在：\n${widget.supervisor.applicationDataPath}',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                      if (widget.onUseRemote != null) ...[
+                        const SizedBox(height: 10),
+                        TextButton.icon(
+                          onPressed: _submitting ? null : widget.onUseRemote,
+                          icon: const Icon(LucideIcons.link, size: 18),
+                          label: const Text('改为连接另一台 LocalLens 服务器'),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -205,10 +239,16 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
     );
   }
 
-  Future<void> _chooseDirectory() async {
+  String? _required(String? value) {
+    return value == null || value.trim().isEmpty ? '此项不能为空' : null;
+  }
+
+  Future<void> _chooseDataDirectory() async {
     final path = await getDirectoryPath();
     if (path == null || !mounted) return;
-    setState(() => _pathController.text = path);
+    setState(() {
+      _dataPathController.text = widget.supervisor.resolveStorageRoot(path);
+    });
   }
 
   Future<void> _submit() async {
@@ -218,13 +258,20 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
       _error = null;
     });
     try {
-      final config = await widget.supervisor.createDefaultConfig(
-        libraryPath: _pathController.text.trim(),
-        libraryName: _libraryNameController.text.trim(),
+      _validateLibraryLayout();
+      final firstLibrary = _libraries.first;
+      final initialConfig = await widget.supervisor.createDefaultConfig(
+        libraryPath: firstLibrary.path.trim(),
+        storageRoot: _dataPathController.text.trim(),
+        libraryName: firstLibrary.name.trim(),
         serverName: _serverNameController.text.trim(),
         allowLan: _allowLan,
         port: int.parse(_portController.text.trim()),
       );
+      final config = initialConfig.copyWith(
+        libraries: List<LocalLibraryConfig>.unmodifiable(_libraries),
+      );
+      await widget.supervisor.saveConfig(config);
       await widget.supervisor.start(config: config);
       await widget.onCompleted(ServerSettings(
         baseUrl: config.localBaseUrl,
@@ -236,6 +283,29 @@ class _LocalServerSetupScreenState extends State<LocalServerSetupScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  void _validateLibraryLayout() {
+    if (_libraries.isEmpty) {
+      throw const LocalServerException('至少需要一个媒体库');
+    }
+    final storage = _normalizedPath(_dataPathController.text);
+    for (final library in _libraries) {
+      final media = _normalizedPath(library.path);
+      if (storage == media ||
+          storage.startsWith('$media\\') ||
+          media.startsWith('$storage\\')) {
+        throw const LocalServerException(
+          'LocalLens 数据目录不能与任何媒体目录相同，也不能互相包含。',
+        );
+      }
+    }
+  }
+
+  String _normalizedPath(String path) {
+    var normalized = Directory(path).absolute.path.replaceAll('/', '\\');
+    normalized = normalized.replaceAll(RegExp(r'[\\/]+$'), '');
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
   }
 }
 

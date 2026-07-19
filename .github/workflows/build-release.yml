@@ -5,14 +5,13 @@ on:
     branches: [main]
   push:
     branches: [main]
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.6.0"
+        description: "Release tag, for example v0.6.1"
         required: true
-        default: "v0.6.0"
+        default: "v0.6.1"
         type: string
 
 permissions:
@@ -24,6 +23,9 @@ concurrency:
 
 env:
   FLUTTER_VERSION: "3.41.9"
+  FFMPEG_VERSION: "8.1.2"
+  FFMPEG_ARCHIVE_URL: "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip"
+  FFMPEG_ARCHIVE_SHA256: "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
 
 jobs:
   server-windows:
@@ -45,7 +47,7 @@ jobs:
             server/go.mod
             server/go.sum
 
-      - name: Resolve and download dependencies
+      - name: Normalize and download dependencies
         run: |
           go mod tidy
           go mod download
@@ -63,7 +65,7 @@ jobs:
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
 
-          $version = "0.6.0-dev"
+          $version = "0.6.1-dev"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
@@ -73,14 +75,12 @@ jobs:
           go build -trimpath `
             -ldflags "-s -w -X main.version=$version" `
             -o (Join-Path $packageDir "LocalLensServer.exe") .
-
           go build -trimpath `
             -ldflags "-H=windowsgui -s -w -X main.version=$version" `
             -o (Join-Path $packageDir "LocalLensServerEmbedded.exe") .
 
           Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
           New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "bin") | Out-Null
-
           @"
           LocalLens Server $version
           ==========================
@@ -88,19 +88,16 @@ jobs:
           Standalone mode:
           1. Copy config.example.json to config.json.
           2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when video transcoding is needed.
+          3. Add ffmpeg.exe and ffprobe.exe to .\bin\ when needed.
           4. Start LocalLensServer.exe -config .\config.json.
 
-          LocalLensServerEmbedded.exe is the no-console runtime used by the unified
-          Windows client. Most users should install the LocalLens Windows client
-          instead of starting this file manually.
+          LocalLensServerEmbedded.exe is used by the unified Windows application.
+          "@ | Set-Content (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
-          v0.6.0 adds the Windows unified host, automatic local configuration,
-          embedded server lifecycle management and visual server settings.
-          Existing databases and server configuration remain compatible.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
-
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+          Compress-Archive `
+            -Path "$packageDir\*" `
+            -DestinationPath (Join-Path $PWD "dist/$packageName.zip") `
+            -Force
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7
@@ -111,7 +108,7 @@ jobs:
           retention-days: 30
 
   flutter-windows:
-    name: Flutter client · Windows x64
+    name: Unified Windows application · x64
     needs: server-windows
     runs-on: windows-latest
     defaults:
@@ -145,42 +142,151 @@ jobs:
             .
           flutter pub get
 
-      - name: Test Flutter client
+      - name: Test Flutter application
         run: flutter test
 
-      - name: Analyze Flutter client
+      - name: Analyze Flutter application
         run: flutter analyze
 
-      - name: Build Windows client
+      - name: Build Windows application
         shell: pwsh
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
-          $version = "0.6.0"
+          $version = "0.6.1"
           if ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME.TrimStart("v")
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
             $version = $env:MANUAL_TAG.TrimStart("v")
           }
-          flutter build windows --release --build-name $version --build-number $env:GITHUB_RUN_NUMBER
+          flutter build windows `
+            --release `
+            --build-name $version `
+            --build-number $env:GITHUB_RUN_NUMBER
 
-      - name: Package unified Windows application
+      - name: Download and verify FFmpeg
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $packageName = "LocalLens-Client-Windows-x64"
-          $packageDir = Join-Path $PWD "dist/$packageName"
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
+          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION"
+          $toolsPath = Join-Path $env:RUNNER_TEMP "local-lens-ffmpeg"
 
-          $serverArtifactDir = Join-Path $env:RUNNER_TEMP "local-lens-server"
-          $serverZip = Get-ChildItem $serverArtifactDir -Filter "*.zip" -Recurse | Select-Object -First 1
+          & curl.exe `
+            --fail `
+            --location `
+            --retry 3 `
+            --retry-delay 5 `
+            --output $archivePath `
+            $env:FFMPEG_ARCHIVE_URL
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download the pinned FFmpeg archive"
+          }
+
+          $archiveHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveHash -ne $env:FFMPEG_ARCHIVE_SHA256) {
+            throw "FFmpeg archive checksum mismatch. Expected $env:FFMPEG_ARCHIVE_SHA256, got $archiveHash"
+          }
+
+          if (Test-Path $extractPath) {
+            Remove-Item $extractPath -Recurse -Force
+          }
+          Expand-Archive $archivePath $extractPath -Force
+
+          $ffmpeg = Get-ChildItem $extractPath -Filter "ffmpeg.exe" -File -Recurse |
+            Select-Object -First 1
+          $ffprobe = Get-ChildItem $extractPath -Filter "ffprobe.exe" -File -Recurse |
+            Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) {
+            throw "Downloaded archive does not contain ffmpeg.exe and ffprobe.exe"
+          }
+
+          $versionOutput = & $ffmpeg.FullName -version 2>&1 | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or "$versionOutput" -notmatch $env:FFMPEG_VERSION) {
+            throw "Unexpected FFmpeg version: $versionOutput"
+          }
+          & $ffprobe.FullName -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "ffprobe.exe failed to start"
+          }
+
+          if (Test-Path $toolsPath) {
+            Remove-Item $toolsPath -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $toolsPath | Out-Null
+          Copy-Item $ffmpeg.FullName (Join-Path $toolsPath "ffmpeg.exe")
+          Copy-Item $ffprobe.FullName (Join-Path $toolsPath "ffprobe.exe")
+
+          @"
+          FFmpeg $env:FFMPEG_VERSION
+          =====================
+
+          Source archive:
+          $env:FFMPEG_ARCHIVE_URL
+
+          Verified archive SHA-256:
+          $archiveHash
+
+          FFmpeg is distributed as a separate executable with LocalLens for media
+          metadata, thumbnails and transcoding. See https://ffmpeg.org/legal.html
+          and the source/build information published by GyanD.
+          "@ | Set-Content (Join-Path $toolsPath "FFMPEG-NOTICE.txt") -Encoding UTF8
+
+      - name: Package unified Windows application
+        shell: pwsh
+        env:
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "LocalLens-Windows-x64"
+          $packageDir = Join-Path $PWD "dist/$packageName"
+          $releaseDir = Join-Path $PWD "build/windows/x64/runner/Release"
+          if (-not (Test-Path $releaseDir)) {
+            throw "Flutter Windows release directory was not generated: $releaseDir"
+          }
+
+          if (Test-Path $packageDir) {
+            Remove-Item $packageDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item "$releaseDir\*" $packageDir -Recurse -Force
+
+          $clientExe = Get-ChildItem $packageDir -File -Filter "*.exe" |
+            Where-Object { $_.Name -notlike "LocalLensServer*" } |
+            Select-Object -First 1
+          if (-not $clientExe) {
+            throw "Flutter build output does not contain a desktop executable"
+          }
+          $targetExe = Join-Path $packageDir "LocalLens.exe"
+          if ($clientExe.FullName -ne $targetExe) {
+            Move-Item $clientExe.FullName $targetExe -Force
+          }
+
+          $version = "0.6.1"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
+            $version = $env:MANUAL_TAG.TrimStart("v")
+          }
+
+          $serverZip = Get-ChildItem `
+            (Join-Path $env:RUNNER_TEMP "local-lens-server") `
+            -Filter "*.zip" `
+            -Recurse |
+            Select-Object -First 1
           if (-not $serverZip) {
             throw "Embedded server artifact zip was not found"
           }
           $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
-          Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
-          $embeddedServer = Get-ChildItem $serverExtractDir -Filter "LocalLensServerEmbedded.exe" -Recurse | Select-Object -First 1
+          if (Test-Path $serverExtractDir) {
+            Remove-Item $serverExtractDir -Recurse -Force
+          }
+          Expand-Archive $serverZip.FullName $serverExtractDir -Force
+          $embeddedServer = Get-ChildItem `
+            $serverExtractDir `
+            -Filter "LocalLensServerEmbedded.exe" `
+            -Recurse |
+            Select-Object -First 1
           if (-not $embeddedServer) {
             throw "LocalLensServerEmbedded.exe was not found in server artifact"
           }
@@ -188,37 +294,216 @@ jobs:
           $runtimeDir = Join-Path $packageDir "runtime"
           $mediaToolsDir = Join-Path $runtimeDir "media-tools"
           New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item $embeddedServer.FullName (Join-Path $runtimeDir "LocalLensServer.exe") -Force
+          Copy-Item $embeddedServer.FullName `
+            (Join-Path $runtimeDir "LocalLensServer.exe") `
+            -Force
+          Copy-Item `
+            (Join-Path $env:RUNNER_TEMP "local-lens-ffmpeg\*") `
+            $mediaToolsDir `
+            -Recurse `
+            -Force
+
+          $ffmpegHash = (Get-FileHash `
+            (Join-Path $mediaToolsDir "ffmpeg.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          $ffprobeHash = (Get-FileHash `
+            (Join-Path $mediaToolsDir "ffprobe.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          [ordered]@{
+            package = $packageName
+            client_version = $version
+            server_version = $version
+            source_commit = $env:GITHUB_SHA
+            build_number = $env:GITHUB_RUN_NUMBER
+            client_executable = "LocalLens.exe"
+            embedded_server = "runtime/LocalLensServer.exe"
+            ffmpeg_version = $env:FFMPEG_VERSION
+            ffmpeg_archive_sha256 = $env:FFMPEG_ARCHIVE_SHA256
+            ffmpeg_path = "runtime/media-tools/ffmpeg.exe"
+            ffprobe_path = "runtime/media-tools/ffprobe.exe"
+            ffmpeg_sha256 = $ffmpegHash
+            ffprobe_sha256 = $ffprobeHash
+            built_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+          } | ConvertTo-Json | Set-Content `
+            (Join-Path $packageDir "BUNDLE-MANIFEST.json") `
+            -Encoding UTF8
 
           @"
-          Optional media tools
-          ====================
+          LocalLens Windows $version
+          ==========================
 
-          Put ffmpeg.exe and ffprobe.exe in this directory to enable video
-          thumbnails, broad metadata compatibility and HLS transcoding.
-          The LocalLens client detects these files when it creates local config.
-          "@ | Set-Content -Path (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
+          Launch LocalLens.exe only. It starts runtime\LocalLensServer.exe.
+          FFmpeg and FFprobe are bundled under runtime\media-tools.
+          The first-run wizard lets you choose where LocalLens stores its
+          configuration, SQLite database, thumbnails, cache and logs.
+          "@ | Set-Content (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
-          @"
-          LocalLens Windows ${{ github.run_number }}
-          =========================================
-
-          Launch LocalLens.exe only. The application automatically creates a local
-          configuration, starts the embedded server without a console window and
-          connects through 127.0.0.1. Server data is stored under
-          %LOCALAPPDATA%\LocalLens rather than this installation directory.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
-
-          if (-not (Test-Path (Join-Path $runtimeDir "LocalLensServer.exe"))) {
-            throw "Unified Windows package is missing runtime/LocalLensServer.exe"
+          $requiredFiles = @(
+            "LocalLens.exe",
+            "flutter_windows.dll",
+            "runtime/LocalLensServer.exe",
+            "runtime/media-tools/ffmpeg.exe",
+            "runtime/media-tools/ffprobe.exe",
+            "runtime/media-tools/FFMPEG-NOTICE.txt",
+            "BUNDLE-MANIFEST.json"
+          )
+          foreach ($relativePath in $requiredFiles) {
+            if (-not (Test-Path (Join-Path $packageDir $relativePath))) {
+              throw "Unified Windows package is missing $relativePath"
+            }
           }
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
 
-      - name: Upload Windows client artifact
+          Compress-Archive `
+            -Path "$packageDir\*" `
+            -DestinationPath (Join-Path $PWD "dist/$packageName.zip") `
+            -Force
+
+      - name: Verify final Windows zip integrity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "LocalLens-Windows-x64"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "local-lens-unified-smoke"
+          if (Test-Path $smokeRoot) {
+            Remove-Item $smokeRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
+          Expand-Archive `
+            (Join-Path $PWD "dist/$packageName.zip") `
+            $smokeRoot `
+            -Force
+
+          $requiredFiles = @(
+            "LocalLens.exe",
+            "runtime/LocalLensServer.exe",
+            "runtime/media-tools/ffmpeg.exe",
+            "runtime/media-tools/ffprobe.exe",
+            "BUNDLE-MANIFEST.json"
+          )
+          foreach ($relativePath in $requiredFiles) {
+            if (-not (Test-Path (Join-Path $smokeRoot $relativePath))) {
+              throw "Final Windows zip is missing $relativePath"
+            }
+          }
+
+          $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.client_executable -ne "LocalLens.exe") {
+            throw "Bundle manifest has the wrong client executable"
+          }
+          if ($manifest.embedded_server -ne "runtime/LocalLensServer.exe") {
+            throw "Bundle manifest has the wrong embedded server path"
+          }
+          if ($manifest.ffmpeg_version -ne $env:FFMPEG_VERSION) {
+            throw "Bundle manifest has the wrong FFmpeg version"
+          }
+          if ($manifest.ffmpeg_archive_sha256 -ne $env:FFMPEG_ARCHIVE_SHA256) {
+            throw "Bundle manifest has the wrong FFmpeg archive checksum"
+          }
+
+          $ffmpegHash = (Get-FileHash `
+            (Join-Path $smokeRoot "runtime/media-tools/ffmpeg.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          $ffprobeHash = (Get-FileHash `
+            (Join-Path $smokeRoot "runtime/media-tools/ffprobe.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($ffmpegHash -ne $manifest.ffmpeg_sha256) {
+            throw "Final ZIP ffmpeg.exe hash differs from the packaged manifest"
+          }
+          if ($ffprobeHash -ne $manifest.ffprobe_sha256) {
+            throw "Final ZIP ffprobe.exe hash differs from the packaged manifest"
+          }
+
+      - name: Smoke test embedded server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "local-lens-unified-smoke"
+          $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
+          $port = 19527
+          $dataDir = Join-Path $smokeRoot "LocalLensData\data"
+          $mediaDir = Join-Path $smokeRoot "media"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
+
+          $configPath = Join-Path $smokeRoot "server-smoke.json"
+          [ordered]@{
+            listen_address = "127.0.0.1:$port"
+            public_url = ""
+            server_name = "LocalLens CI Smoke"
+            data_dir = $dataDir
+            api_token = "ci-smoke-token-with-more-than-16-characters"
+            ffmpeg_path = ""
+            ffprobe_path = ""
+            auto_scan = $false
+            watch_files = $false
+            thumbnail_workers = 1
+            metadata_workers = 1
+            transcode_workers = 1
+            transcode_cache_gb = 1
+            transcode_hardware = "software"
+            pairing_ttl_minutes = 5
+            libraries = @(
+              [ordered]@{
+                id = "smoke"
+                name = "Smoke Library"
+                path = $mediaDir
+                recursive = $true
+                enabled = $true
+              }
+            )
+          } | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
+
+          $stdoutPath = Join-Path $smokeRoot "server-stdout.log"
+          $stderrPath = Join-Path $smokeRoot "server-stderr.log"
+          $process = $null
+          try {
+            $process = Start-Process `
+              -FilePath $serverPath `
+              -ArgumentList @("-config", $configPath) `
+              -WorkingDirectory $smokeRoot `
+              -RedirectStandardOutput $stdoutPath `
+              -RedirectStandardError $stderrPath `
+              -PassThru
+
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+              Start-Sleep -Milliseconds 500
+              if ($process.HasExited) {
+                throw "Embedded server exited with code $($process.ExitCode)"
+              }
+              try {
+                Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:$port/api/v1/health" `
+                  -TimeoutSec 2 | Out-Null
+                $healthy = $true
+                break
+              } catch {}
+            }
+            if (-not $healthy) {
+              throw "Embedded server health check timed out"
+            }
+          } catch {
+            Write-Host "===== server-smoke.json ====="
+            Get-Content $configPath -ErrorAction SilentlyContinue
+            Write-Host "===== stdout ====="
+            Get-Content $stdoutPath -ErrorAction SilentlyContinue
+            Write-Host "===== stderr ====="
+            Get-Content $stderrPath -ErrorAction SilentlyContinue
+            throw
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+              $process.WaitForExit()
+            }
+          }
+
+      - name: Upload unified Windows artifact
         uses: actions/upload-artifact@v7
         with:
-          name: LocalLens-Client-Windows-x64
-          path: apps/local_lens/dist/LocalLens-Client-Windows-x64.zip
+          name: LocalLens-Windows-x64
+          path: apps/local_lens/dist/LocalLens-Windows-x64.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -270,7 +555,11 @@ jobs:
               if permission not in text:
                   text = text.replace(marker, marker + "\n    " + permission, 1)
           if 'android:usesCleartextTraffic="true"' not in text:
-              text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+              text = text.replace(
+                  "<application",
+                  '<application android:usesCleartextTraffic="true"',
+                  1,
+              )
           manifest.write_text(text, encoding="utf-8")
           PY
 
@@ -288,19 +577,19 @@ jobs:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          VERSION="0.6.0"
+          VERSION="0.6.1"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
             VERSION="${MANUAL_TAG#v}"
           fi
-
           flutter build apk \
             --release \
             --build-name "$VERSION" \
             --build-number "${GITHUB_RUN_NUMBER}"
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/LocalLens-Android-universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            dist/LocalLens-Android-universal.apk
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v7
@@ -312,10 +601,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs:
-      - server-windows
-      - flutter-windows
-      - flutter-android
+    needs: [server-windows, flutter-windows, flutter-android]
     runs-on: ubuntu-latest
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
@@ -333,6 +619,14 @@ jobs:
           pattern: LocalLens-*
           path: dist
           merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/LocalLens-Windows-x64.zip
+          test -f dist/LocalLens-Server-Windows-x64.zip
+          test -f dist/LocalLens-Android-universal.apk
 
       - name: Generate SHA-256 checksums
         shell: bash
@@ -354,14 +648,12 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.6.0"
+            TAG="v0.6.1"
           fi
-
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: $TAG" >&2
             exit 1
           fi
-
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create or update release
@@ -371,12 +663,10 @@ jobs:
           TAG: ${{ steps.release_tag.outputs.tag }}
         run: |
           set -euo pipefail
-
           PRERELEASE_ARGS=()
           if [[ "$TAG" == *-* ]]; then
             PRERELEASE_ARGS+=(--prerelease)
           fi
-
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* \
               --repo "$GITHUB_REPOSITORY" \
