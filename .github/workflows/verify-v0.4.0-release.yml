@@ -1,0 +1,64 @@
+name: Verify v0.4.0 Release
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for and inspect published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.4.0
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            if gh release view "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,isPrerelease,targetCommitish,assets,url \
+              > release.json 2>/dev/null; then
+              python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          assert data["tagName"] == "v0.4.0", data
+          assert data["isDraft"] is False, data
+          assert data["isPrerelease"] is False, data
+
+          required = {
+              "LocalLens-Server-Windows-x64.zip",
+              "LocalLens-Client-Windows-x64.zip",
+              "LocalLens-Android-universal.apk",
+              "SHA256SUMS.txt",
+          }
+          assets = {item["name"]: item for item in data.get("assets", [])}
+          missing = required - set(assets)
+          assert not missing, f"missing release assets: {sorted(missing)}"
+          for name in required:
+              assert assets[name].get("size", 0) > 0, f"empty release asset: {name}"
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+          PY
+              exit 0
+            fi
+            echo "v0.4.0 release is not ready yet (attempt $attempt/36)"
+            sleep 10
+          done
+          echo "v0.4.0 release did not become ready" >&2
+          exit 1
+
+      - name: Upload verification metadata
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: v0.4.0-release-verification
+          path: release.json
+          if-no-files-found: warn
+          retention-days: 7
