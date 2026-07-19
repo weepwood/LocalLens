@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -64,9 +64,6 @@ func main() {
 		"ffmpegAvailable", ffmpegAvailable,
 	)
 
-	// Mark the initial maintenance scan as running before workers start. Workers
-	// then pause their write claims until the scan transaction has completed,
-	// avoiding predictable SQLITE_BUSY warnings during startup.
 	if cfg.AutoScan {
 		app.startScan()
 	}
