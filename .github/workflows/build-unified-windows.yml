@@ -1,0 +1,124 @@
+name: Build Unified Windows App
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-lens-unified-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  unified-windows:
+    name: Unified Windows application
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.mod
+            server/go.sum
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Test and build embedded server
+        shell: pwsh
+        working-directory: server
+        run: |
+          $ErrorActionPreference = "Stop"
+          go mod download
+          go test ./...
+          New-Item -ItemType Directory -Force -Path ../apps/local_lens/build/embedded-server | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.version=0.6.0-dev" -o ../apps/local_lens/build/embedded-server/LocalLensServer.exe .
+          Copy-Item config.example.json ../apps/local_lens/build/embedded-server/config.example.json
+
+      - name: Generate Windows platform project
+        shell: pwsh
+        working-directory: apps/local_lens
+        run: |
+          flutter create `
+            --project-name local_lens `
+            --org com.weepwood `
+            --platforms windows `
+            .
+          flutter pub get
+
+      - name: Test and analyze Flutter client
+        working-directory: apps/local_lens
+        run: |
+          flutter test
+          flutter analyze
+
+      - name: Build Flutter Windows client
+        working-directory: apps/local_lens
+        run: flutter build windows --release --build-name 0.6.0 --build-number ${{ github.run_number }}
+
+      - name: Assemble unified package
+        shell: pwsh
+        working-directory: apps/local_lens
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "LocalLens-Windows-x64"
+          $packageDir = Join-Path $PWD "dist/$packageName"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
+
+          $runtimeDir = Join-Path $packageDir "runtime"
+          $mediaToolsDir = Join-Path $runtimeDir "media-tools"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
+          Copy-Item "build/embedded-server/LocalLensServer.exe" $runtimeDir
+          Copy-Item "build/embedded-server/config.example.json" $runtimeDir
+
+          @"
+          LocalLens Unified Windows 0.6.0-dev
+          ===================================
+
+          Run LocalLens.exe only. The application starts and manages the embedded
+          LocalLensServer.exe automatically.
+
+          User data and configuration are stored under:
+          %LOCALAPPDATA%\LocalLens
+
+          Optional video transcoding tools:
+          runtime\media-tools\ffmpeg.exe
+          runtime\media-tools\ffprobe.exe
+
+          Remote-server mode remains available from Connection Settings.
+          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
+
+          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
+
+      - name: Verify unified package
+        shell: pwsh
+        working-directory: apps/local_lens
+        run: |
+          $archive = "dist/LocalLens-Windows-x64.zip"
+          if (!(Test-Path $archive)) { throw "Unified archive is missing" }
+          if ((Get-Item $archive).Length -le 0) { throw "Unified archive is empty" }
+
+      - name: Upload unified Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Windows-x64
+          path: apps/local_lens/dist/LocalLens-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30
