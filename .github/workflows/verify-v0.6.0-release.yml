@@ -1,0 +1,120 @@
+name: Verify v0.6.0 Release
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v0.6.0"
+          for attempt in $(seq 1 180); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,isPrerelease,assets > release.json 2>/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == "180" ]]; then
+              echo "Release $TAG did not appear" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          assert data["tagName"] == "v0.6.0", data
+          assert data["isDraft"] is False, data
+          assert data["isPrerelease"] is False, data
+          expected = {
+              "LocalLens-Server-Windows-x64.zip",
+              "LocalLens-Client-Windows-x64.zip",
+              "LocalLens-Android-universal.apk",
+              "SHA256SUMS.txt",
+          }
+          assets = {item["name"]: item for item in data.get("assets", [])}
+          missing = expected.difference(assets)
+          assert not missing, f"missing assets: {sorted(missing)}"
+          for name in expected:
+              assert int(assets[name].get("size", 0)) > 0, f"empty asset: {name}"
+          PY
+
+      - name: Download and inspect unified Windows package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          gh release download v0.6.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "LocalLens-Client-Windows-x64.zip" \
+            --pattern "SHA256SUMS.txt" \
+            --dir release-assets
+
+          unzip -l release-assets/LocalLens-Client-Windows-x64.zip > client-package.txt
+          grep -F "runtime/LocalLensServer.exe" client-package.txt
+          grep -F "runtime/media-tools/README.txt" client-package.txt
+          grep -F "LocalLens.exe" client-package.txt
+
+          cd release-assets
+          grep "LocalLens-Client-Windows-x64.zip" SHA256SUMS.txt > ../client-checksum.txt
+          sha256sum -c ../client-checksum.txt
+          cd ..
+
+          python3 - <<'PY'
+          import json
+          import zipfile
+          from pathlib import Path
+
+          archive = Path("release-assets/LocalLens-Client-Windows-x64.zip")
+          with zipfile.ZipFile(archive) as zf:
+              normalized = [name.replace("\\", "/") for name in zf.namelist()]
+              required_suffixes = [
+                  "/LocalLens.exe",
+                  "/runtime/LocalLensServer.exe",
+                  "/runtime/media-tools/README.txt",
+              ]
+              for suffix in required_suffixes:
+                  matches = [name for name in normalized if name.endswith(suffix)]
+                  assert matches, f"missing {suffix}"
+                  info = zf.getinfo(matches[0])
+                  assert info.file_size > 0, f"empty {matches[0]}"
+
+          release = json.loads(Path("release.json").read_text(encoding="utf-8"))
+          assets = {item["name"]: int(item["size"]) for item in release["assets"]}
+          Path("verification.txt").write_text(
+              "tag=v0.6.0\n"
+              "draft=false\n"
+              "prerelease=false\n"
+              "unified_client_contains_server=true\n"
+              "unified_client_checksum=true\n"
+              + "\n".join(f"{name}={size}" for name, size in sorted(assets.items()))
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          cat verification.txt
+
+      - name: Upload verification metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: v0.6.0-release-verification
+          path: |
+            verification.txt
+            client-package.txt
+          if-no-files-found: error
+          retention-days: 7
