@@ -10,6 +10,9 @@
   "watch_files": true,
   "thumbnail_workers": 2,
   "metadata_workers": 2,
+  "transcode_workers": 1,
+  "transcode_cache_gb": 20,
+  "transcode_hardware": "software",
   "pairing_ttl_minutes": 5,
   "libraries": [
     {
