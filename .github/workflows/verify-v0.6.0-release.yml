@@ -12,7 +12,7 @@ jobs:
   verify-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect published release
+      - name: Download published release metadata and client
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -20,34 +20,6 @@ jobs:
           set -euo pipefail
           gh release view v0.6.0 --repo "$GITHUB_REPOSITORY" \
             --json tagName,isDraft,isPrerelease,assets > release.json
-
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          data = json.loads(Path("release.json").read_text(encoding="utf-8"))
-          assert data["tagName"] == "v0.6.0", data
-          assert data["isDraft"] is False, data
-          assert data["isPrerelease"] is False, data
-          expected = {
-              "LocalLens-Server-Windows-x64.zip",
-              "LocalLens-Client-Windows-x64.zip",
-              "LocalLens-Android-universal.apk",
-              "SHA256SUMS.txt",
-          }
-          assets = {item["name"]: item for item in data.get("assets", [])}
-          missing = expected.difference(assets)
-          assert not missing, f"missing assets: {sorted(missing)}"
-          for name in expected:
-              assert int(assets[name].get("size", 0)) > 0, f"empty asset: {name}"
-          PY
-
-      - name: Download and inspect unified Windows package
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
           mkdir release-assets
           gh release download v0.6.0 \
             --repo "$GITHUB_REPOSITORY" \
@@ -55,62 +27,108 @@ jobs:
             --pattern "SHA256SUMS.txt" \
             --dir release-assets
 
+      - name: Inspect unified Windows package
+        id: inspect
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
           python3 - <<'PY'
           import hashlib
           import json
+          import traceback
           import zipfile
-          from pathlib import Path
+          from pathlib import Path, PurePosixPath
 
-          archive = Path("release-assets/LocalLens-Client-Windows-x64.zip")
-          checksum_file = Path("release-assets/SHA256SUMS.txt")
-          expected_hash = None
-          for line in checksum_file.read_text(encoding="utf-8").splitlines():
-              parts = line.strip().split(maxsplit=1)
-              if len(parts) == 2 and parts[1].lstrip("*").endswith(archive.name):
-                  expected_hash = parts[0].lower()
-                  break
-          assert expected_hash, "client checksum not found"
-          actual_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
-          assert actual_hash == expected_hash, (actual_hash, expected_hash)
+          results = {}
+          details = []
+          try:
+              release = json.loads(Path("release.json").read_text(encoding="utf-8"))
+              assets = {item["name"]: int(item.get("size", 0)) for item in release.get("assets", [])}
+              expected_assets = {
+                  "LocalLens-Server-Windows-x64.zip",
+                  "LocalLens-Client-Windows-x64.zip",
+                  "LocalLens-Android-universal.apk",
+                  "SHA256SUMS.txt",
+              }
+              results["tag"] = release.get("tagName") == "v0.6.0"
+              results["not_draft"] = release.get("isDraft") is False
+              results["not_prerelease"] = release.get("isPrerelease") is False
+              results["all_assets"] = expected_assets.issubset(assets)
+              results["nonempty_assets"] = all(assets.get(name, 0) > 0 for name in expected_assets)
 
-          rows = []
-          with zipfile.ZipFile(archive) as zf:
-              entries = {info.filename.replace("\\", "/"): info for info in zf.infolist()}
-              required_suffixes = [
-                  "/LocalLens.exe",
-                  "/runtime/LocalLensServer.exe",
-                  "/runtime/media-tools/README.txt",
-              ]
-              for suffix in required_suffixes:
-                  matches = [(name, info) for name, info in entries.items() if name.endswith(suffix)]
-                  assert matches, f"missing {suffix}"
-                  name, info = matches[0]
-                  assert info.file_size > 0, f"empty {name}"
-                  rows.append(f"{name}\t{info.file_size}")
+              archive = Path("release-assets/LocalLens-Client-Windows-x64.zip")
+              checksum_file = Path("release-assets/SHA256SUMS.txt")
+              expected_hash = None
+              for line in checksum_file.read_text(encoding="utf-8-sig").splitlines():
+                  parts = line.strip().split(maxsplit=1)
+                  if len(parts) == 2 and PurePosixPath(parts[1].lstrip("*").replace("\\", "/")).name == archive.name:
+                      expected_hash = parts[0].lower()
+                      break
+              actual_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+              results["checksum_entry_found"] = expected_hash is not None
+              results["checksum_matches"] = expected_hash == actual_hash
+              details.append(f"actual_sha256={actual_hash}")
+              details.append(f"expected_sha256={expected_hash}")
 
-          Path("client-package.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
-          release = json.loads(Path("release.json").read_text(encoding="utf-8"))
-          assets = {item["name"]: int(item["size"]) for item in release["assets"]}
+              with zipfile.ZipFile(archive) as zf:
+                  entries = [(info.filename.replace("\\", "/"), info.file_size) for info in zf.infolist()]
+              Path("all-client-entries.txt").write_text(
+                  "\n".join(f"{name}\t{size}" for name, size in entries) + "\n",
+                  encoding="utf-8",
+              )
+              requirements = {
+                  "client_exe": "LocalLens.exe",
+                  "embedded_server": "runtime/LocalLensServer.exe",
+                  "media_tools_readme": "runtime/media-tools/README.txt",
+              }
+              selected = []
+              for key, suffix in requirements.items():
+                  matches = [(name, size) for name, size in entries if name.endswith(suffix)]
+                  results[key] = bool(matches) and matches[0][1] > 0
+                  if matches:
+                      selected.append(f"{matches[0][0]}\t{matches[0][1]}")
+              Path("client-package.txt").write_text("\n".join(selected) + "\n", encoding="utf-8")
+
+              details.extend(f"asset_{name}={size}" for name, size in sorted(assets.items()))
+          except Exception:
+              details.append(traceback.format_exc())
+
           Path("verification.txt").write_text(
-              "tag=v0.6.0\n"
-              "draft=false\n"
-              "prerelease=false\n"
-              "unified_client_contains_server=true\n"
-              "unified_client_checksum=true\n"
-              + "\n".join(f"{name}={size}" for name, size in sorted(assets.items()))
+              "\n".join(f"{key}={str(value).lower()}" for key, value in sorted(results.items()))
+              + "\n"
+              + "\n".join(details)
               + "\n",
               encoding="utf-8",
           )
+          required = [
+              "tag", "not_draft", "not_prerelease", "all_assets", "nonempty_assets",
+              "checksum_entry_found", "checksum_matches", "client_exe",
+              "embedded_server", "media_tools_readme",
+          ]
+          raise SystemExit(0 if all(results.get(key) is True for key in required) else 1)
           PY
-          cat client-package.txt
-          cat verification.txt
+          STATUS=$?
+          cat verification.txt || true
+          cat client-package.txt || true
+          echo "inspection_exit=$STATUS" >> verification.txt
+          exit $STATUS
 
       - name: Upload verification metadata
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: v0.6.0-release-verification
           path: |
             verification.txt
             client-package.txt
-          if-no-files-found: error
+            all-client-entries.txt
+          if-no-files-found: warn
           retention-days: 7
+
+      - name: Enforce verification
+        if: steps.inspect.outcome != 'success'
+        shell: bash
+        run: |
+          echo "Release package verification failed; inspect uploaded metadata." >&2
+          exit 1
