@@ -62,7 +62,9 @@ func TestLoadConfigDefaultsV02(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.WatchFiles || cfg.ThumbnailWorkers != 2 || cfg.MetadataWorkers != 2 {
+	if !cfg.WatchFiles || cfg.ThumbnailWorkers != 2 || cfg.MetadataWorkers != 2 ||
+		cfg.TranscodeWorkers != 1 || cfg.TranscodeCacheGB != 20 ||
+		cfg.TranscodeHardware != "software" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if filepath.Base(cfg.FFprobePath) != "ffprobe.exe" {
@@ -72,7 +74,7 @@ func TestLoadConfigDefaultsV02(t *testing.T) {
 
 func TestTimelineCursorRoundTrip(t *testing.T) {
 	item := Media{
-		ID: "media-123",
+		ID:         "media-123",
 		ModifiedAt: time.Date(2026, 7, 18, 10, 0, 0, 123, time.UTC),
 		CapturedAt: time.Date(2020, 5, 3, 8, 0, 0, 456, time.UTC),
 	}
@@ -100,13 +102,14 @@ func TestOpenDBAppliesV02Migrations(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 8 {
-		t.Fatalf("migration count = %d, want 8", migrationCount)
+	if migrationCount != 9 {
+		t.Fatalf("migration count = %d, want 9", migrationCount)
 	}
 
 	for _, table := range []string{
 		"folders", "thumbnail_jobs", "metadata_jobs", "devices",
 		"playback_progress", "albums", "album_items", "tags", "media_tags",
+		"transcode_jobs",
 	} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
@@ -235,8 +238,8 @@ INSERT INTO media_items(
 ) VALUES(?,?,?,?,?,'image','image/jpeg',100,?,?, 'exif',0,'scan',?,?)`
 	items := []struct {
 		id, library, relative, folder, modified, captured string
-		favorite bool
-		rating int
+		favorite                                          bool
+		rating                                            int
 	}{
 		{"a-new", "a", "Travel/new.jpg", "Travel", "2026-07-18T12:00:00Z", "2020-01-03T12:00:00Z", true, 5},
 		{"a-old", "a", "Travel/old.jpg", "Travel", "2026-07-17T12:00:00Z", "2020-01-02T12:00:00Z", false, 3},

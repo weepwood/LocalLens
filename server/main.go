@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.4.0"
+var version = "0.5.0"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -56,6 +56,13 @@ func main() {
 		"ffmpegPath", cfg.FFmpegPath,
 		"ffmpegAvailable", ffmpegAvailable,
 	)
+	logger.Info(
+		"playback pipeline ready",
+		"transcodeWorkers", cfg.TranscodeWorkers,
+		"transcodeCacheGB", cfg.TranscodeCacheGB,
+		"transcodeHardware", cfg.TranscodeHardware,
+		"ffmpegAvailable", ffmpegAvailable,
+	)
 
 	// Mark the initial maintenance scan as running before workers start. Workers
 	// then pause their write claims until the scan transaction has completed,
@@ -68,6 +75,10 @@ func main() {
 		os.Exit(1)
 	}
 	app.startNativeImageThumbnailWorkers()
+	if err := app.startTranscodeWorkers(); err != nil {
+		logger.Error("start transcode workers", "error", err)
+		os.Exit(1)
+	}
 
 	if cfg.WatchFiles {
 		watcher, watcherErr := newFileWatcher(app)
@@ -83,7 +94,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           app.routesV022(),
+		Handler:           app.routesV05Release(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

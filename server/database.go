@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		{version: 6, apply: migrateDevicesAndPlayback},
 		{version: 7, apply: migrateCollections},
 		{version: 8, apply: migrateV02Indexes},
+		// Migration 9 is intentionally owned by native_thumbnail.go because it
+		// performs a one-time recovery after the application has started.
+		{version: 10, apply: migratePlaybackPipeline},
 	}
 
 	for _, item := range migrations {
@@ -293,6 +296,27 @@ CREATE INDEX IF NOT EXISTS idx_media_missing_captured
   ON media_items(missing, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_media_metadata_status
   ON media_items(metadata_status, modified_at);
+`)
+	return err
+}
+
+func migratePlaybackPipeline(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+CREATE TABLE IF NOT EXISTS transcode_jobs (
+  media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+  profile TEXT NOT NULL,
+  source_modified_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  progress REAL NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(media_id, profile)
+);
+CREATE INDEX IF NOT EXISTS idx_transcode_jobs_status
+  ON transcode_jobs(status, updated_at, media_id, profile);
+UPDATE transcode_jobs SET status='pending',progress=0 WHERE status='running';
 `)
 	return err
 }

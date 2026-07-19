@@ -39,8 +39,29 @@ func loadConfig(path string) (Config, error) {
 	if cfg.MetadataWorkers <= 0 {
 		cfg.MetadataWorkers = 2
 	}
+	if cfg.TranscodeWorkers <= 0 {
+		cfg.TranscodeWorkers = 1
+	}
+	if cfg.TranscodeCacheGB <= 0 {
+		cfg.TranscodeCacheGB = 20
+	}
+	if strings.TrimSpace(cfg.TranscodeHardware) == "" {
+		cfg.TranscodeHardware = "software"
+	}
+	cfg.TranscodeHardware = strings.ToLower(strings.TrimSpace(cfg.TranscodeHardware))
 	if cfg.ThumbnailWorkers > 8 || cfg.MetadataWorkers > 8 {
-		return Config{}, errors.New("worker counts must be between 1 and 8")
+		return Config{}, errors.New("thumbnail and metadata worker counts must be between 1 and 8")
+	}
+	if cfg.TranscodeWorkers > 4 {
+		return Config{}, errors.New("transcode_workers must be between 1 and 4")
+	}
+	if cfg.TranscodeCacheGB < 1 || cfg.TranscodeCacheGB > 500 {
+		return Config{}, errors.New("transcode_cache_gb must be between 1 and 500")
+	}
+	switch cfg.TranscodeHardware {
+	case "software", "nvenc", "qsv", "amf":
+	default:
+		return Config{}, errors.New("transcode_hardware must be software, nvenc, qsv or amf")
 	}
 	if cfg.PairingTTLMinutes <= 0 {
 		cfg.PairingTTLMinutes = 5
