@@ -82,12 +82,19 @@ class _ImageViewerSurfaceState extends State<ImageViewerSurface> {
   }
 
   void _bindController() {
-    widget.controller
-      .._reset = _reset
-      .._zoomIn = () => _setScale((_scale * 1.35).clamp(0.5, 8))
-      .._zoomOut = () => _setScale((_scale / 1.35).clamp(0.5, 8))
-      .._rotateLeft = () => setState(() => _quarterTurns = (_quarterTurns + 3) % 4)
-      .._rotateRight = () => setState(() => _quarterTurns = (_quarterTurns + 1) % 4);
+    widget.controller._reset = _reset;
+    widget.controller._zoomIn = () {
+      _setScale((_scale * 1.35).clamp(0.5, 8).toDouble());
+    };
+    widget.controller._zoomOut = () {
+      _setScale((_scale / 1.35).clamp(0.5, 8).toDouble());
+    };
+    widget.controller._rotateLeft = () {
+      setState(() => _quarterTurns = (_quarterTurns + 3) % 4);
+    };
+    widget.controller._rotateRight = () {
+      setState(() => _quarterTurns = (_quarterTurns + 1) % 4);
+    };
   }
 
   void _reset() {
@@ -127,7 +134,7 @@ class _ImageViewerSurfaceState extends State<ImageViewerSurface> {
 
   void _handleScroll(PointerScrollEvent event) {
     final factor = event.scrollDelta.dy < 0 ? 1.15 : 1 / 1.15;
-    _setScale((_scale * factor).clamp(0.5, 8));
+    _setScale((_scale * factor).clamp(0.5, 8).toDouble());
   }
 
   @override
@@ -154,7 +161,7 @@ class _ImageViewerSurfaceState extends State<ImageViewerSurface> {
               maxScale: 8,
               boundaryMargin: const EdgeInsets.all(180),
               clipBehavior: Clip.none,
-              onInteractionUpdate: (_) {
+              onInteractionUpdate: (details) {
                 final scale = _transform.value.getMaxScaleOnAxis();
                 if ((scale - _scale).abs() > 0.01) {
                   _scale = scale;
@@ -178,7 +185,8 @@ class _ImageViewerSurfaceState extends State<ImageViewerSurface> {
                         headers: widget.headers,
                         fit: BoxFit.contain,
                         filterQuality: FilterQuality.medium,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        errorBuilder: (context, error, stackTrace) =>
+                            const SizedBox.shrink(),
                       ),
                       AnimatedOpacity(
                         duration: const Duration(milliseconds: 220),
@@ -198,7 +206,7 @@ class _ImageViewerSurfaceState extends State<ImageViewerSurface> {
                             }
                             return child;
                           },
-                          errorBuilder: (_, error, stackTrace) {
+                          errorBuilder: (context, error, stackTrace) {
                             if (!_originalFailed) {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (mounted) setState(() => _originalFailed = true);
