@@ -3,6 +3,8 @@ name: Verify v0.5.0 Release
 on:
   push:
     branches: ["chore/verify-v0.5.0-release"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
