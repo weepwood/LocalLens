@@ -8,7 +8,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../models/media_item.dart';
+import '../../models/playback_manifest.dart';
 import '../../services/api_client.dart';
+import '../../services/playback_api.dart';
 
 class VideoViewerSurface extends StatefulWidget {
   const VideoViewerSurface({
@@ -45,10 +47,18 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
   Timer? _saveTimer;
   Timer? _hideTimer;
   Timer? _resumeTimer;
+  Timer? _manifestTimer;
+
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration _buffer = Duration.zero;
   Duration _resumePosition = Duration.zero;
+
+  PlaybackManifest? _manifest;
+  int _selectedHeight = 0;
+  double _prepareProgress = 0;
+  bool _preparingPlayback = true;
+  bool _switchingQuality = false;
   bool _playing = false;
   bool _buffering = false;
   bool _ready = false;
@@ -102,8 +112,8 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
         if (mounted) setState(() => _rate = value);
       }),
       _player.stream.error.listen((value) {
-        if (value.trim().isEmpty || !mounted) return;
-        setState(() => _error = value.trim());
+        if (value.trim().isEmpty || !mounted || _preparingPlayback) return;
+        setState(() => _error = _readablePlaybackError(value));
         _showControls();
       }),
       _player.stream.completed.listen((completed) {
@@ -116,7 +126,27 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
       const Duration(seconds: 10),
       (_) => unawaited(_saveProgress()),
     );
-    unawaited(_open());
+    unawaited(_initialize());
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoViewerSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id) {
+      _manifestTimer?.cancel();
+      _resumeTimer?.cancel();
+      _manifest = null;
+      _selectedHeight = 0;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _buffer = Duration.zero;
+      _restored = false;
+      _showResumePrompt = false;
+      _error = null;
+      _ready = false;
+      _preparingPlayback = true;
+      unawaited(_player.stop().then((_) => _initialize()));
+    }
   }
 
   @override
@@ -128,39 +158,162 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     }
   }
 
-  Future<void> _open() async {
+  Future<void> _initialize() async {
     try {
       final progress = await widget.api.getPlaybackProgress(widget.item.id);
-      await _player.open(
-        Media(widget.url, httpHeaders: widget.headers),
-        play: false,
-      );
       if (!mounted) return;
-      final knownDuration = progress.durationMs > 0
-          ? progress.durationMs
-          : widget.item.durationMs;
-      final remaining = knownDuration - progress.positionMs;
-      final shouldPrompt = progress.positionMs >= 10000 &&
-          !progress.completed &&
-          (knownDuration <= 0 || remaining > 30000);
-      setState(() {
-        _ready = true;
-        _restored = true;
-        _resumePosition = Duration(milliseconds: progress.positionMs);
-        _showResumePrompt = shouldPrompt;
-      });
-      if (shouldPrompt) {
-        _resumeTimer = Timer(const Duration(seconds: 5), _continuePlayback);
-      } else {
-        await _player.play();
-      }
+      _resumePosition = Duration(milliseconds: progress.positionMs);
+      await _negotiate(
+        initial: true,
+        progress: progress,
+        preferredHeight: null,
+        forceTranscode: false,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _preparingPlayback = false;
         _ready = true;
         _error = _readablePlaybackError(error);
       });
     }
+  }
+
+  Future<void> _negotiate({
+    required bool initial,
+    PlaybackProgress? progress,
+    required int? preferredHeight,
+    required bool forceTranscode,
+    Duration? resumeAt,
+    bool resumePlaying = false,
+  }) async {
+    _manifestTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _error = null;
+        _preparingPlayback = true;
+        _prepareProgress = 0;
+        _switchingQuality = !initial;
+      });
+    }
+    try {
+      final manifest = await widget.api.requestPlaybackManifest(
+        widget.item.id,
+        preferredHeight: preferredHeight,
+        forceTranscode: forceTranscode,
+      );
+      if (!mounted) return;
+      if (manifest.preparing) {
+        setState(() {
+          _prepareProgress = manifest.progress.clamp(0, 1).toDouble();
+          _manifest = manifest;
+        });
+        final retryAfter = manifest.retryAfter.clamp(1, 10);
+        _manifestTimer = Timer(Duration(seconds: retryAfter), () {
+          unawaited(_negotiate(
+            initial: initial,
+            progress: progress,
+            preferredHeight: preferredHeight,
+            forceTranscode: forceTranscode,
+            resumeAt: resumeAt,
+            resumePlaying: resumePlaying,
+          ));
+        });
+        return;
+      }
+      if (manifest.failed || !manifest.ready) {
+        throw ApiException(
+          manifest.error.isEmpty ? '服务器无法准备该视频' : manifest.error,
+        );
+      }
+      await _openManifest(
+        manifest,
+        initial: initial,
+        progress: progress,
+        resumeAt: resumeAt,
+        resumePlaying: resumePlaying,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _preparingPlayback = false;
+        _switchingQuality = false;
+        _ready = true;
+        _error = _readablePlaybackError(error);
+      });
+      _showControls();
+    }
+  }
+
+  Future<void> _openManifest(
+    PlaybackManifest manifest, {
+    required bool initial,
+    PlaybackProgress? progress,
+    Duration? resumeAt,
+    bool resumePlaying = false,
+  }) async {
+    final resolved = widget.api.resolve(manifest.url).toString();
+    await _player.open(
+      Media(resolved, httpHeaders: widget.headers),
+      play: false,
+    );
+    if (!mounted) return;
+    setState(() {
+      _manifest = manifest;
+      _preparingPlayback = false;
+      _switchingQuality = false;
+      _ready = true;
+      _error = null;
+    });
+
+    if (!initial) {
+      final target = resumeAt ?? Duration.zero;
+      if (target > Duration.zero) await _player.seek(target);
+      if (resumePlaying) await _player.play();
+      return;
+    }
+
+    final saved = progress ??
+        PlaybackProgress(
+          deviceId: '',
+          mediaId: widget.item.id,
+          positionMs: 0,
+          durationMs: widget.item.durationMs,
+          completed: false,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        );
+    final knownDuration = saved.durationMs > 0
+        ? saved.durationMs
+        : widget.item.durationMs;
+    final remaining = knownDuration - saved.positionMs;
+    final shouldPrompt = saved.positionMs >= 10000 &&
+        !saved.completed &&
+        (knownDuration <= 0 || remaining > 30000);
+    setState(() {
+      _restored = true;
+      _resumePosition = Duration(milliseconds: saved.positionMs);
+      _showResumePrompt = shouldPrompt;
+    });
+    if (shouldPrompt) {
+      _resumeTimer = Timer(const Duration(seconds: 5), _continuePlayback);
+    } else {
+      await _player.play();
+    }
+  }
+
+  Future<void> _changeQuality(int height) async {
+    if (_selectedHeight == height || _preparingPlayback) return;
+    final wasPlaying = _playing;
+    final resumeAt = _position;
+    await _saveProgress(force: true);
+    _selectedHeight = height;
+    await _negotiate(
+      initial: false,
+      preferredHeight: height == 0 ? null : height,
+      forceTranscode: height != 0,
+      resumeAt: resumeAt,
+      resumePlaying: wasPlaying,
+    );
   }
 
   Future<void> _continuePlayback() async {
@@ -178,13 +331,16 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
   }
 
   Future<void> _retry() async {
-    setState(() {
-      _error = null;
-      _ready = false;
-      _restored = false;
-    });
+    final resumeAt = _position;
+    final resumePlaying = _playing;
     await _player.stop();
-    await _open();
+    await _negotiate(
+      initial: !_restored,
+      preferredHeight: _selectedHeight == 0 ? null : _selectedHeight,
+      forceTranscode: _selectedHeight != 0,
+      resumeAt: resumeAt,
+      resumePlaying: resumePlaying,
+    );
   }
 
   void _showControls() {
@@ -198,7 +354,12 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
 
   void _scheduleControlsHide() {
     _hideTimer?.cancel();
-    if (!_playing || _showResumePrompt || _error != null) return;
+    if (!_playing ||
+        _showResumePrompt ||
+        _error != null ||
+        _preparingPlayback) {
+      return;
+    }
     _hideTimer = Timer(const Duration(seconds: 3), () {
       if (!mounted || !_playing) return;
       setState(() => _controlsVisible = false);
@@ -216,7 +377,8 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
   Future<void> _seekRelative(Duration delta) async {
     final durationMs = _effectiveDuration.inMilliseconds;
     final target = (_position.inMilliseconds + delta.inMilliseconds)
-        .clamp(0, durationMs > 0 ? durationMs : 1 << 31);
+        .clamp(0, durationMs > 0 ? durationMs : 1 << 31)
+        .toInt();
     await _player.seek(Duration(milliseconds: target));
     await _saveProgress(force: true);
     _showControls();
@@ -231,7 +393,7 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
 
   Future<void> _toggleMute() async {
     if (_volume <= 0) {
-      await _player.setVolume(_lastAudibleVolume.clamp(5, 100));
+      await _player.setVolume(_lastAudibleVolume.clamp(5, 100).toDouble());
     } else {
       _lastAudibleVolume = _volume;
       await _player.setVolume(0);
@@ -248,7 +410,7 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     if (!force && positionMs < 1000) return;
     final completionWindow = durationMs <= 0
         ? 10000
-        : (durationMs * 0.02).round().clamp(10000, 60000);
+        : (durationMs * 0.02).round().clamp(10000, 60000).toInt();
     final completed = completedOverride ??
         (durationMs > 0 && positionMs >= durationMs - completionWindow);
     try {
@@ -278,9 +440,9 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     } else if (key == LogicalKeyboardKey.arrowRight) {
       unawaited(_seekRelative(Duration(seconds: shift ? 30 : 5)));
     } else if (key == LogicalKeyboardKey.arrowUp) {
-      unawaited(_player.setVolume((_volume + 5).clamp(0, 100)));
+      unawaited(_player.setVolume((_volume + 5).clamp(0, 100).toDouble()));
     } else if (key == LogicalKeyboardKey.arrowDown) {
-      unawaited(_player.setVolume((_volume - 5).clamp(0, 100)));
+      unawaited(_player.setVolume((_volume - 5).clamp(0, 100).toDouble()));
     } else if (key == LogicalKeyboardKey.keyM) {
       unawaited(_toggleMute());
     } else if (key == LogicalKeyboardKey.keyF ||
@@ -291,9 +453,9 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     } else if (key == LogicalKeyboardKey.keyP) {
       widget.onPrevious?.call();
     } else if (key == LogicalKeyboardKey.bracketLeft) {
-      unawaited(_player.setRate((_rate - 0.25).clamp(0.5, 2)));
+      unawaited(_player.setRate((_rate - 0.25).clamp(0.5, 2).toDouble()));
     } else if (key == LogicalKeyboardKey.bracketRight) {
-      unawaited(_player.setRate((_rate + 0.25).clamp(0.5, 2)));
+      unawaited(_player.setRate((_rate + 0.25).clamp(0.5, 2).toDouble()));
     } else {
       final number = int.tryParse(event.character ?? '');
       if (number == null || number < 0 || number > 9) {
@@ -315,6 +477,7 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     _saveTimer?.cancel();
     _hideTimer?.cancel();
     _resumeTimer?.cancel();
+    _manifestTimer?.cancel();
     unawaited(_saveProgress(force: true));
     unawaited(WakelockPlus.disable());
     for (final subscription in _subscriptions) {
@@ -374,18 +537,8 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
                   ),
                 ),
               ),
-              if (!_ready)
-                const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: Colors.white),
-                      SizedBox(height: 12),
-                      Text('正在准备视频…', style: TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                ),
-              if (_buffering && _ready && _error == null)
+              if (_preparingPlayback) _buildPreparingState(),
+              if (_buffering && _ready && _error == null && !_preparingPlayback)
                 const Center(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
@@ -419,6 +572,58 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
     );
   }
 
+  Widget _buildPreparingState() {
+    final percent = (_prepareProgress * 100).round();
+    final hasProgress = _manifest?.transcoded == true || _prepareProgress > 0;
+    return ColoredBox(
+      color: _switchingQuality ? const Color(0xAA000000) : Colors.black,
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 380),
+          margin: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: const Color(0xE61A1B1E),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              Text(
+                _switchingQuality ? '正在切换清晰度…' : '正在准备视频…',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasProgress
+                    ? '服务器正在生成兼容版本 · $percent%'
+                    : '正在检查原始视频与当前设备的兼容性',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (hasProgress) ...[
+                const SizedBox(height: 14),
+                LinearProgressIndicator(
+                  value: _prepareProgress <= 0 ? null : _prepareProgress,
+                  minHeight: 4,
+                  backgroundColor: Colors.white12,
+                  color: Colors.white,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildControls({
     required double durationMs,
     required double positionMs,
@@ -437,35 +642,36 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
             ),
           ),
         ),
-        Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _RoundControlButton(
-                tooltip: '后退 10 秒',
-                icon: LucideIcons.rotateCcw,
-                onPressed: () => unawaited(
-                  _seekRelative(const Duration(seconds: -10)),
+        if (!_preparingPlayback)
+          Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RoundControlButton(
+                  tooltip: '后退 10 秒',
+                  icon: LucideIcons.rotateCcw,
+                  onPressed: () => unawaited(
+                    _seekRelative(const Duration(seconds: -10)),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              _RoundControlButton(
-                tooltip: _playing ? '暂停' : '播放',
-                icon: _playing ? LucideIcons.pause : LucideIcons.play,
-                prominent: true,
-                onPressed: () => unawaited(_player.playOrPause()),
-              ),
-              const SizedBox(width: 16),
-              _RoundControlButton(
-                tooltip: '前进 10 秒',
-                icon: LucideIcons.rotateCw,
-                onPressed: () => unawaited(
-                  _seekRelative(const Duration(seconds: 10)),
+                const SizedBox(width: 16),
+                _RoundControlButton(
+                  tooltip: _playing ? '暂停' : '播放',
+                  icon: _playing ? LucideIcons.pause : LucideIcons.play,
+                  prominent: true,
+                  onPressed: () => unawaited(_player.playOrPause()),
                 ),
-              ),
-            ],
+                const SizedBox(width: 16),
+                _RoundControlButton(
+                  tooltip: '前进 10 秒',
+                  icon: LucideIcons.rotateCw,
+                  onPressed: () => unawaited(
+                    _seekRelative(const Duration(seconds: 10)),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         Positioned(
           left: 20,
           right: 20,
@@ -495,7 +701,7 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
                       value: durationMs <= 0 ? 0 : positionMs.clamp(0, durationMs),
                       max: durationMs <= 0 ? 1 : durationMs,
                       onChangeStart: (_) => _showControls(),
-                      onChanged: durationMs <= 0
+                      onChanged: durationMs <= 0 || _preparingPlayback
                           ? null
                           : (value) => setState(
                                 () => _position = Duration(milliseconds: value.round()),
@@ -509,14 +715,20 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
                 children: [
                   IconButton(
                     tooltip: _playing ? '暂停' : '播放',
-                    onPressed: () => unawaited(_player.playOrPause()),
+                    onPressed: _preparingPlayback
+                        ? null
+                        : () => unawaited(_player.playOrPause()),
                     color: Colors.white,
+                    disabledColor: Colors.white38,
                     icon: Icon(_playing ? LucideIcons.pause : LucideIcons.play),
                   ),
                   IconButton(
                     tooltip: _volume <= 0 ? '取消静音' : '静音',
-                    onPressed: () => unawaited(_toggleMute()),
+                    onPressed: _preparingPlayback
+                        ? null
+                        : () => unawaited(_toggleMute()),
                     color: Colors.white,
+                    disabledColor: Colors.white38,
                     icon: Icon(
                       _volume <= 0 ? LucideIcons.volumeX : LucideIcons.volume2,
                     ),
@@ -534,7 +746,9 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
                       child: Slider(
                         value: _volume.clamp(0, 100),
                         max: 100,
-                        onChanged: (value) => unawaited(_player.setVolume(value)),
+                        onChanged: _preparingPlayback
+                            ? null
+                            : (value) => unawaited(_player.setVolume(value)),
                       ),
                     ),
                   ),
@@ -544,13 +758,72 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                   const Spacer(),
+                  if ((_manifest?.subtitles.length ?? 0) > 0)
+                    PopupMenuButton<PlaybackSubtitle>(
+                      tooltip: '已发现 ${_manifest!.subtitles.length} 个外挂字幕',
+                      color: const Color(0xFF202124),
+                      itemBuilder: (context) => [
+                        for (final subtitle in _manifest!.subtitles)
+                          PopupMenuItem<PlaybackSubtitle>(
+                            value: subtitle,
+                            enabled: false,
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.subtitles_outlined,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${subtitle.name} · ${subtitle.language}',
+                                    style: const TextStyle(color: Colors.white70),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        child: Icon(Icons.subtitles_outlined, color: Colors.white),
+                      ),
+                    ),
+                  PopupMenuButton<int>(
+                    tooltip: '播放清晰度',
+                    initialValue: _selectedHeight,
+                    color: const Color(0xFF202124),
+                    onSelected: (value) => unawaited(_changeQuality(value)),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 0, child: _QualityMenuText('自动 / 原始画质')),
+                      PopupMenuItem(value: 1080, child: _QualityMenuText('1080p 兼容模式')),
+                      PopupMenuItem(value: 720, child: _QualityMenuText('720p 兼容模式')),
+                      PopupMenuItem(value: 480, child: _QualityMenuText('480p 兼容模式')),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.high_quality, color: Colors.white, size: 19),
+                          const SizedBox(width: 5),
+                          Text(
+                            _manifest?.qualityLabel ?? '自动',
+                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   PopupMenuButton<double>(
                     tooltip: '播放速度',
                     initialValue: _rate,
                     color: const Color(0xFF202124),
                     onSelected: (value) => unawaited(_player.setRate(value)),
                     itemBuilder: (context) => [
-                      for (final value in const [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0])
+                      for (final value
+                          in const [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0])
                         PopupMenuItem(
                           value: value,
                           child: Text(
@@ -644,15 +917,15 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
         margin: const EdgeInsets.all(24),
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: const Color(0xEE191A1D),
+          color: const Color(0xF21A1B1E),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.white12),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(LucideIcons.circleAlert, color: Colors.white, size: 32),
-            const SizedBox(height: 12),
+            const Icon(LucideIcons.triangleAlert, color: Color(0xFFFFB45E), size: 34),
+            const SizedBox(height: 14),
             const Text(
               '无法播放此视频',
               style: TextStyle(
@@ -663,15 +936,29 @@ class _VideoViewerSurfaceState extends State<VideoViewerSurface>
             ),
             const SizedBox(height: 8),
             Text(
-              _readablePlaybackError(_error),
+              _error ?? '未知错误',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70),
+              style: const TextStyle(color: Colors.white70, height: 1.45),
             ),
             const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: () => unawaited(_retry()),
-              icon: const Icon(LucideIcons.refreshCw, size: 17),
-              label: const Text('重新尝试'),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                FilledButton.icon(
+                  onPressed: () => unawaited(_retry()),
+                  icon: const Icon(LucideIcons.refreshCw, size: 18),
+                  label: const Text('重试'),
+                ),
+                if (_selectedHeight == 0)
+                  OutlinedButton.icon(
+                    onPressed: () => unawaited(_changeQuality(720)),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
+                    icon: const Icon(Icons.high_quality, size: 18),
+                    label: const Text('使用 720p 兼容模式'),
+                  ),
+              ],
             ),
           ],
         ),
@@ -698,17 +985,18 @@ class _RoundControlButton extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: prominent ? Colors.white : Colors.black54,
+        color: prominent ? Colors.white : const Color(0x99000000),
         shape: const CircleBorder(),
         child: InkWell(
-          onTap: onPressed,
           customBorder: const CircleBorder(),
-          child: SizedBox.square(
-            dimension: prominent ? 62 : 48,
+          onTap: onPressed,
+          child: SizedBox(
+            width: prominent ? 68 : 52,
+            height: prominent ? 68 : 52,
             child: Icon(
               icon,
               color: prominent ? Colors.black : Colors.white,
-              size: prominent ? 28 : 22,
+              size: prominent ? 32 : 24,
             ),
           ),
         ),
@@ -717,29 +1005,49 @@ class _RoundControlButton extends StatelessWidget {
   }
 }
 
-String _formatDuration(Duration value) {
-  final total = value.inSeconds.clamp(0, 1 << 31);
-  final hours = total ~/ 3600;
-  final minutes = (total % 3600) ~/ 60;
-  final seconds = total % 60;
-  String two(int number) => number.toString().padLeft(2, '0');
-  return hours > 0
-      ? '$hours:${two(minutes)}:${two(seconds)}'
-      : '${two(minutes)}:${two(seconds)}';
+class _QualityMenuText extends StatelessWidget {
+  const _QualityMenuText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text, style: const TextStyle(color: Colors.white));
+  }
 }
 
-String _readablePlaybackError(Object? error) {
-  final text = error?.toString().trim() ?? '未知播放错误';
-  final lower = text.toLowerCase();
-  if (lower.contains('401') || lower.contains('403')) {
-    return '连接令牌已经失效，请返回连接设置重新配对。';
+String _formatDuration(Duration value) {
+  final totalSeconds = value.inSeconds < 0 ? 0 : value.inSeconds;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '${hours.toString().padLeft(2, '0')}:'
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
   }
-  if (lower.contains('404')) return '视频文件可能已经移动或删除。';
+  return '${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
+}
+
+String _readablePlaybackError(Object error) {
+  final value = error.toString().replaceFirst('ApiException: ', '').trim();
+  final lower = value.toLowerCase();
+  if (lower.contains('401') || lower.contains('403') || lower.contains('unauthorized')) {
+    return '服务器连接令牌已失效，请重新配置服务器连接。';
+  }
+  if (lower.contains('404') || lower.contains('not found')) {
+    return '视频文件已经移动、删除，或转码缓存尚未准备完成。';
+  }
+  if (lower.contains('ffmpeg is not configured') ||
+      lower.contains('ffmpeg unavailable')) {
+    return '该视频需要兼容转码，但服务端没有正确配置 FFmpeg。';
+  }
   if (lower.contains('timeout') || lower.contains('超时')) {
-    return '局域网连接超时，请检查服务器和无线网络。';
+    return '准备视频超时，请检查局域网连接和服务端转码任务。';
   }
   if (lower.contains('codec') || lower.contains('decode')) {
-    return '当前设备可能不支持该视频编码。';
+    return '当前设备无法直接解码该视频，可切换到兼容清晰度重试。';
   }
-  return text.length > 260 ? '${text.substring(0, 260)}…' : text;
+  return value.isEmpty ? '播放器遇到未知错误，请重试。' : value;
 }
