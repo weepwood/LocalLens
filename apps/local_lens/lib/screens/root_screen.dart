@@ -60,6 +60,17 @@ class _RootScreenState extends State<RootScreen> {
       return null;
     }
 
+    // The user may remove the selected LocalLens data directory outside the
+    // application. In that case SharedPreferences can still say "local" even
+    // though server.json no longer exists. Treat it as an uninitialized local
+    // installation instead of trapping the user on the startup error screen.
+    // The storage pointer is intentionally preserved: reconnecting an external
+    // drive and restarting the app can restore the old configuration.
+    if (settings?.isLocal == true && !_supervisor.hasConfiguration) {
+      await _store.clear();
+      settings = null;
+    }
+
     if (settings?.isLocal == true ||
         (settings == null && _supervisor.hasConfiguration)) {
       settings = await _supervisor.ensureRunning();
@@ -98,6 +109,7 @@ class _RootScreenState extends State<RootScreen> {
             error: snapshot.error!,
             supervisor: _supervisor,
             onRetry: _retryBootstrap,
+            onResetLocal: _resetLocalInitialization,
             onUseRemote: _showRemoteSetup,
           );
         }
@@ -206,6 +218,21 @@ class _RootScreenState extends State<RootScreen> {
 
   void _retryBootstrap() {
     setState(() => _settingsFuture = _bootstrap());
+  }
+
+  Future<void> _resetLocalInitialization() async {
+    await _supervisor.clearDataAndRestoreDefaults();
+    await _store.clear();
+    if (!mounted) return;
+    setState(() {
+      _activeSettings = null;
+      _legacySettings = null;
+      _requiresConnectionModeSelection = false;
+      _editingLocalServer = false;
+      _editingConnection = false;
+      _useRemoteSetup = false;
+      _settingsFuture = Future<ServerSettings?>.value();
+    });
   }
 
   Future<void> _disconnect() async {
@@ -351,7 +378,10 @@ class _StartupScreen extends StatelessWidget {
                 ),
                 if (state.lastError != null) ...[
                   const SizedBox(height: 8),
-                  Text(state.lastError!, style: Theme.of(context).textTheme.bodySmall),
+                  Text(
+                    state.lastError!,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ],
               ],
             );
@@ -367,12 +397,14 @@ class _StartupErrorScreen extends StatelessWidget {
     required this.error,
     required this.supervisor,
     required this.onRetry,
+    required this.onResetLocal,
     required this.onUseRemote,
   });
 
   final Object error;
   final LocalServerSupervisor supervisor;
   final VoidCallback onRetry;
+  final Future<void> Function() onResetLocal;
   final VoidCallback onUseRemote;
 
   @override
@@ -380,7 +412,7 @@ class _StartupErrorScreen extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
+          constraints: const BoxConstraints(maxWidth: 620),
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -392,9 +424,18 @@ class _StartupErrorScreen extends StatelessWidget {
                   color: Theme.of(context).colorScheme.error,
                 ),
                 const SizedBox(height: 16),
-                Text('本机服务器启动失败', style: Theme.of(context).textTheme.headlineSmall),
+                Text(
+                  '本机服务器启动失败',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
                 const SizedBox(height: 10),
                 Text('$error', textAlign: TextAlign.center),
+                const SizedBox(height: 10),
+                Text(
+                  '若你曾手动删除 LocalLens 数据目录，可以重新初始化本机服务器。该操作不会删除媒体目录中的原始图片和视频。',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 22),
                 Wrap(
                   spacing: 10,
@@ -405,6 +446,11 @@ class _StartupErrorScreen extends StatelessWidget {
                       onPressed: onRetry,
                       icon: const Icon(LucideIcons.refreshCw, size: 18),
                       label: const Text('重试启动'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _confirmReset(context),
+                      icon: const Icon(LucideIcons.rotateCcw, size: 18),
+                      label: const Text('清除本机配置并重新设置'),
                     ),
                     OutlinedButton.icon(
                       onPressed: supervisor.openLogDirectory,
@@ -424,5 +470,28 @@ class _StartupErrorScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _confirmReset(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重新初始化本机服务器？'),
+        content: const Text(
+          '将清除本机服务配置、SQLite 索引、缩略图、缓存和日志，然后返回首次设置页面。媒体目录中的原始图片和视频不会被删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('确认重新初始化'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await onResetLocal();
   }
 }
