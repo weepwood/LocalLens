@@ -23,6 +23,8 @@ concurrency:
 
 env:
   FLUTTER_VERSION: "3.41.9"
+  FFMPEG_VERSION: "8.1.2"
+  FFMPEG_ARCHIVE_URL: "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip"
 
 jobs:
   server-windows:
@@ -84,7 +86,7 @@ jobs:
           Standalone mode:
           1. Copy config.example.json to config.json.
           2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when needed.
+          3. Add ffmpeg.exe and ffprobe.exe to .\bin\ when needed.
           4. Start LocalLensServer.exe -config .\config.json.
 
           LocalLensServerEmbedded.exe is used by the unified Windows application.
@@ -159,6 +161,65 @@ jobs:
             --build-name $version `
             --build-number $env:GITHUB_RUN_NUMBER
 
+      - name: Download and verify FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "ffmpeg-$env:FFMPEG_VERSION"
+          $toolsPath = Join-Path $env:RUNNER_TEMP "local-lens-ffmpeg"
+
+          Invoke-WebRequest `
+            -Uri $env:FFMPEG_ARCHIVE_URL `
+            -OutFile $archivePath `
+            -MaximumRetryCount 3 `
+            -RetryIntervalSec 5
+
+          if (Test-Path $extractPath) {
+            Remove-Item $extractPath -Recurse -Force
+          }
+          Expand-Archive $archivePath $extractPath -Force
+
+          $ffmpeg = Get-ChildItem $extractPath -Filter "ffmpeg.exe" -File -Recurse |
+            Select-Object -First 1
+          $ffprobe = Get-ChildItem $extractPath -Filter "ffprobe.exe" -File -Recurse |
+            Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) {
+            throw "Downloaded archive does not contain ffmpeg.exe and ffprobe.exe"
+          }
+
+          $versionOutput = & $ffmpeg.FullName -version 2>&1 | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or "$versionOutput" -notmatch $env:FFMPEG_VERSION) {
+            throw "Unexpected FFmpeg version: $versionOutput"
+          }
+          & $ffprobe.FullName -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "ffprobe.exe failed to start"
+          }
+
+          if (Test-Path $toolsPath) {
+            Remove-Item $toolsPath -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path $toolsPath | Out-Null
+          Copy-Item $ffmpeg.FullName (Join-Path $toolsPath "ffmpeg.exe")
+          Copy-Item $ffprobe.FullName (Join-Path $toolsPath "ffprobe.exe")
+
+          $archiveHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          @"
+          FFmpeg $env:FFMPEG_VERSION
+          =====================
+
+          Source archive:
+          $env:FFMPEG_ARCHIVE_URL
+
+          Downloaded archive SHA-256:
+          $archiveHash
+
+          FFmpeg is a separate executable distributed with LocalLens for media
+          metadata, thumbnails and transcoding. See https://ffmpeg.org/legal.html
+          and the source/build information published by the build distributor.
+          "@ | Set-Content (Join-Path $toolsPath "FFMPEG-NOTICE.txt") -Encoding UTF8
+
       - name: Package unified Windows application
         shell: pwsh
         env:
@@ -204,7 +265,6 @@ jobs:
           if (-not $serverZip) {
             throw "Embedded server artifact zip was not found"
           }
-
           $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
           if (Test-Path $serverExtractDir) {
             Remove-Item $serverExtractDir -Recurse -Force
@@ -222,19 +282,21 @@ jobs:
           $runtimeDir = Join-Path $packageDir "runtime"
           $mediaToolsDir = Join-Path $runtimeDir "media-tools"
           New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item `
-            $embeddedServer.FullName `
+          Copy-Item $embeddedServer.FullName `
             (Join-Path $runtimeDir "LocalLensServer.exe") `
             -Force
+          Copy-Item `
+            (Join-Path $env:RUNNER_TEMP "local-lens-ffmpeg\*") `
+            $mediaToolsDir `
+            -Recurse `
+            -Force
 
-          @"
-          Optional media tools
-          ====================
-
-          Put ffmpeg.exe and ffprobe.exe here to enable video thumbnails,
-          broad metadata compatibility and HLS transcoding.
-          The embedded Go server is already included.
-          "@ | Set-Content (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
+          $ffmpegHash = (Get-FileHash `
+            (Join-Path $mediaToolsDir "ffmpeg.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          $ffprobeHash = (Get-FileHash `
+            (Join-Path $mediaToolsDir "ffprobe.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
 
           [ordered]@{
             package = $packageName
@@ -244,6 +306,11 @@ jobs:
             build_number = $env:GITHUB_RUN_NUMBER
             client_executable = "LocalLens.exe"
             embedded_server = "runtime/LocalLensServer.exe"
+            ffmpeg_version = $env:FFMPEG_VERSION
+            ffmpeg_path = "runtime/media-tools/ffmpeg.exe"
+            ffprobe_path = "runtime/media-tools/ffprobe.exe"
+            ffmpeg_sha256 = $ffmpegHash
+            ffprobe_sha256 = $ffprobeHash
             built_at_utc = (Get-Date).ToUniversalTime().ToString("o")
           } | ConvertTo-Json | Set-Content `
             (Join-Path $packageDir "BUNDLE-MANIFEST.json") `
@@ -254,19 +321,22 @@ jobs:
           ==========================
 
           Launch LocalLens.exe only. It starts runtime\LocalLensServer.exe.
-          Server data is stored under %LOCALAPPDATA%\LocalLens.
+          FFmpeg and FFprobe are bundled under runtime\media-tools.
+          The first-run wizard lets you choose where LocalLens stores its
+          configuration, SQLite database, thumbnails, cache and logs.
           "@ | Set-Content (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           $requiredFiles = @(
             "LocalLens.exe",
             "flutter_windows.dll",
             "runtime/LocalLensServer.exe",
-            "runtime/media-tools/README.txt",
+            "runtime/media-tools/ffmpeg.exe",
+            "runtime/media-tools/ffprobe.exe",
+            "runtime/media-tools/FFMPEG-NOTICE.txt",
             "BUNDLE-MANIFEST.json"
           )
           foreach ($relativePath in $requiredFiles) {
-            $requiredPath = Join-Path $packageDir $relativePath
-            if (-not (Test-Path $requiredPath)) {
+            if (-not (Test-Path (Join-Path $packageDir $relativePath))) {
               throw "Unified Windows package is missing $relativePath"
             }
           }
@@ -293,8 +363,16 @@ jobs:
 
           $clientPath = Join-Path $smokeRoot "LocalLens.exe"
           $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
+          $ffmpegPath = Join-Path $smokeRoot "runtime/media-tools/ffmpeg.exe"
+          $ffprobePath = Join-Path $smokeRoot "runtime/media-tools/ffprobe.exe"
           $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
-          foreach ($path in @($clientPath, $serverPath, $manifestPath)) {
+          foreach ($path in @(
+            $clientPath,
+            $serverPath,
+            $ffmpegPath,
+            $ffprobePath,
+            $manifestPath
+          )) {
             if (-not (Test-Path $path)) {
               throw "Final Windows zip is missing $path"
             }
@@ -307,9 +385,22 @@ jobs:
           if ($manifest.embedded_server -ne "runtime/LocalLensServer.exe") {
             throw "Bundle manifest has the wrong embedded server path"
           }
+          if ($manifest.ffmpeg_version -ne $env:FFMPEG_VERSION) {
+            throw "Bundle manifest has the wrong FFmpeg version"
+          }
+
+          $ffmpegVersion = & $ffmpegPath -version 2>&1 | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or "$ffmpegVersion" -notmatch $env:FFMPEG_VERSION) {
+            throw "Bundled FFmpeg failed: $ffmpegVersion"
+          }
+          & $ffprobePath -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Bundled FFprobe failed"
+          }
 
           $port = 19527
-          $dataDir = Join-Path $smokeRoot "server-data"
+          $dataRoot = Join-Path $smokeRoot "LocalLensData"
+          $dataDir = Join-Path $dataRoot "data"
           $mediaDir = Join-Path $smokeRoot "media"
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
@@ -320,8 +411,8 @@ jobs:
             server_name = "LocalLens CI Smoke"
             data_dir = $dataDir
             api_token = "ci-smoke-token-with-more-than-16-characters"
-            ffmpeg_path = ""
-            ffprobe_path = ""
+            ffmpeg_path = $ffmpegPath
+            ffprobe_path = $ffprobePath
             auto_scan = $false
             watch_files = $false
             thumbnail_workers = 1
@@ -456,7 +547,6 @@ jobs:
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
             VERSION="${MANUAL_TAG#v}"
           fi
-
           flutter build apk \
             --release \
             --build-name "$VERSION" \
