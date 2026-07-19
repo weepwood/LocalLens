@@ -8,7 +8,7 @@ class MediaViewerSession extends ChangeNotifier {
     required int initialIndex,
   })  : assert(items.isNotEmpty),
         _items = List<MediaItem>.of(items),
-        _index = initialIndex.clamp(0, items.length - 1);
+        _index = initialIndex.clamp(0, items.length - 1).toInt();
 
   final List<MediaItem> _items;
   int _index;
