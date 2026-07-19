@@ -103,6 +103,9 @@ class PlaybackProgress {
     required this.positionMs,
     required this.durationMs,
     required this.completed,
+    this.deviceId = '',
+    this.mediaId = '',
+    this.updatedAt,
   });
 
   factory PlaybackProgress.fromJson(Map<String, dynamic> json) =>
@@ -110,11 +113,17 @@ class PlaybackProgress {
         positionMs: (json['positionMs'] as num? ?? 0).toInt(),
         durationMs: (json['durationMs'] as num? ?? 0).toInt(),
         completed: json['completed'] as bool? ?? false,
+        deviceId: json['deviceId'] as String? ?? '',
+        mediaId: json['mediaId'] as String? ?? '',
+        updatedAt: _date(json['updatedAt']),
       );
 
   final int positionMs;
   final int durationMs;
   final bool completed;
+  final String deviceId;
+  final String mediaId;
+  final DateTime? updatedAt;
 }
 
 class DeviceInfo {
