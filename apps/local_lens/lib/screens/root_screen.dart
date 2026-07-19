@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../models/server_runtime_state.dart';
 import '../models/server_settings.dart';
 import '../services/embedded_server_supervisor.dart';
 import '../services/settings_store.dart';
@@ -22,19 +21,12 @@ class _RootScreenState extends State<RootScreen> {
   final EmbeddedServerSupervisor _supervisor =
       EmbeddedServerSupervisor.instance;
   late Future<ServerSettings?> _settingsFuture;
-  StreamSubscription<ServerRuntimeState>? _runtimeSubscription;
-  ServerRuntimeState _runtime = Platform.isWindows
-      ? const ServerRuntimeState(status: ServerRuntimeStatus.starting)
-      : const ServerRuntimeState.unsupported();
   bool _editingConnection = false;
   Object? _bootstrapError;
 
   @override
   void initState() {
     super.initState();
-    _runtimeSubscription = _supervisor.states.listen((state) {
-      if (mounted) setState(() => _runtime = state);
-    });
     _settingsFuture = _initialize();
   }
 
@@ -50,12 +42,6 @@ class _RootScreenState extends State<RootScreen> {
       _bootstrapError = error;
       return null;
     }
-  }
-
-  @override
-  void dispose() {
-    unawaited(_runtimeSubscription?.cancel());
-    super.dispose();
   }
 
   @override
@@ -92,8 +78,6 @@ class _RootScreenState extends State<RootScreen> {
           settings: settings,
           onEditConnection: _editConnection,
           onDisconnect: _disconnect,
-          embeddedServerSupervisor: Platform.isWindows ? _supervisor : null,
-          embeddedRuntimeState: _runtime,
         );
       },
     );
@@ -150,8 +134,10 @@ class _BootstrapErrorScreen extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('无法启动本机 LocalLens 服务',
-                      style: Theme.of(context).textTheme.headlineSmall),
+                  Text(
+                    '无法启动本机 LocalLens 服务',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                   const SizedBox(height: 12),
                   Text('$error'),
                   const SizedBox(height: 20),
