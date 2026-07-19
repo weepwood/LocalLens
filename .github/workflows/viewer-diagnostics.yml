@@ -1,6 +1,8 @@
 name: Viewer Diagnostics
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: ["feat/immersive-media-viewer-v0.4"]
   workflow_dispatch:
