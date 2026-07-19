@@ -26,7 +26,9 @@ class _RootScreenState extends State<RootScreen> {
   bool _editingConnection = false;
   bool _editingLocalServer = false;
   bool _useRemoteSetup = false;
+  bool _requiresConnectionModeSelection = false;
   ServerSettings? _activeSettings;
+  ServerSettings? _legacySettings;
 
   bool get _supportsIntegratedServer => Platform.isWindows;
 
@@ -48,6 +50,16 @@ class _RootScreenState extends State<RootScreen> {
     var settings = await _store.load();
     if (!_supportsIntegratedServer) return settings;
 
+    final hasExplicitMode = await _store.hasExplicitMode();
+    if (settings != null &&
+        !hasExplicitMode &&
+        _supervisor.hasBundledServer) {
+      _legacySettings = settings;
+      _requiresConnectionModeSelection = true;
+      _activeSettings = null;
+      return null;
+    }
+
     if (settings?.isLocal == true ||
         (settings == null && _supervisor.hasConfiguration)) {
       settings = await _supervisor.ensureRunning();
@@ -64,6 +76,14 @@ class _RootScreenState extends State<RootScreen> {
         supervisor: _supervisor,
         onSaved: _saveSettings,
         onClose: _cancelEditing,
+      );
+    }
+
+    if (_requiresConnectionModeSelection && _legacySettings != null) {
+      return _LegacyConnectionModeScreen(
+        previousServer: _legacySettings!.normalizedBaseUrl,
+        onUseLocal: _switchLegacyUserToLocal,
+        onKeepRemote: _keepLegacyRemoteConnection,
       );
     }
 
@@ -117,6 +137,8 @@ class _RootScreenState extends State<RootScreen> {
     if (!mounted) return;
     setState(() {
       _activeSettings = settings;
+      _legacySettings = null;
+      _requiresConnectionModeSelection = false;
       _editingConnection = false;
       _editingLocalServer = false;
       _useRemoteSetup = false;
@@ -130,6 +152,26 @@ class _RootScreenState extends State<RootScreen> {
       token: settings.token,
       mode: ServerConnectionMode.remote,
     ));
+  }
+
+  Future<void> _switchLegacyUserToLocal() async {
+    await _store.clear();
+    if (!mounted) return;
+    setState(() {
+      _legacySettings = null;
+      _activeSettings = null;
+      _requiresConnectionModeSelection = false;
+      _editingConnection = false;
+      _editingLocalServer = false;
+      _useRemoteSetup = false;
+      _settingsFuture = Future<ServerSettings?>.value();
+    });
+  }
+
+  Future<void> _keepLegacyRemoteConnection() async {
+    final settings = _legacySettings;
+    if (settings == null) return;
+    await _saveRemoteSettings(settings);
   }
 
   void _editConnection() {
@@ -149,6 +191,7 @@ class _RootScreenState extends State<RootScreen> {
 
   void _showRemoteSetup() {
     setState(() {
+      _requiresConnectionModeSelection = false;
       _useRemoteSetup = true;
       _editingConnection = true;
     });
@@ -172,11 +215,110 @@ class _RootScreenState extends State<RootScreen> {
     if (!mounted) return;
     setState(() {
       _activeSettings = null;
+      _legacySettings = null;
+      _requiresConnectionModeSelection = false;
       _editingLocalServer = false;
       _editingConnection = wasLocal;
       _useRemoteSetup = wasLocal;
       _settingsFuture = Future<ServerSettings?>.value();
     });
+  }
+}
+
+class _LegacyConnectionModeScreen extends StatelessWidget {
+  const _LegacyConnectionModeScreen({
+    required this.previousServer,
+    required this.onUseLocal,
+    required this.onKeepRemote,
+  });
+
+  final String previousServer;
+  final Future<void> Function() onUseLocal;
+  final Future<void> Function() onKeepRemote;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Icon(LucideIcons.serverCog, size: 28),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        '选择 Windows 运行方式',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '新版 Windows 安装包已经包含 LocalLens 服务端。旧版本只保存了服务器地址，无法判断你希望使用本机一体化模式，还是继续连接原来的远程服务器。',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(LucideIcons.link, size: 19),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '旧服务器：$previousServer',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton.icon(
+                        onPressed: onUseLocal,
+                        icon: const Icon(LucideIcons.monitorCog, size: 18),
+                        label: const Text('使用本机内置服务器'),
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: onKeepRemote,
+                        icon: const Icon(LucideIcons.network, size: 18),
+                        label: const Text('继续连接原来的服务器'),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        '选择本机模式后会进入媒体目录设置向导；不会删除原服务器上的任何数据。',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
