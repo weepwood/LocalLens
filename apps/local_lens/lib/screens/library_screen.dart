@@ -119,7 +119,8 @@ class _DesktopShell extends StatelessWidget {
                     child: ListView.separated(
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       itemCount: _destinations.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 5),
+                      separatorBuilder: (context, separatorIndex) =>
+                          const SizedBox(height: 5),
                       itemBuilder: (context, itemIndex) {
                         final item = _destinations[itemIndex];
                         return _SidebarDestination(
@@ -304,8 +305,10 @@ class _Brand extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('LocalLens', style: Theme.of(context).textTheme.titleLarge),
-              Text('Personal media space',
-                  style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                'Personal media space',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           ),
         ),
