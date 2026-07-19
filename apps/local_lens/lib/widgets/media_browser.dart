@@ -5,8 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 import '../models/media_item.dart';
-import '../screens/image_viewer_screen.dart';
-import '../screens/video_viewer_screen.dart';
+import '../screens/media_viewer/media_viewer_screen.dart';
 import '../services/api_client.dart';
 import 'app_components.dart';
 import 'media_manage_sheet.dart';
@@ -52,9 +51,11 @@ class MediaBrowser extends StatefulWidget {
 
 class MediaBrowserState extends State<MediaBrowser> {
   static const _pageSize = 100;
-  final _scrollController = ScrollController();
-  final _items = <MediaItem>[];
-  final _favoritePending = <String>{};
+
+  final ScrollController _scrollController = ScrollController();
+  final List<MediaItem> _items = [];
+  final Set<String> _favoritePending = {};
+
   bool _loading = true;
   bool _loadingMore = false;
   bool _compactGrid = false;
@@ -234,10 +235,7 @@ class MediaBrowserState extends State<MediaBrowser> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 10),
       child: Row(
         children: [
-          Text(
-            '$_total 项媒体',
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
+          Text('$_total 项媒体', style: Theme.of(context).textTheme.labelLarge),
           const SizedBox(width: 8),
           Text(
             '已加载 ${_items.length}',
@@ -413,23 +411,18 @@ class MediaBrowserState extends State<MediaBrowser> {
   }
 
   void _open(MediaItem item) {
-    final route = item.isVideo
-        ? MaterialPageRoute<void>(
-            builder: (_) => VideoViewerScreen(
-              item: item,
-              url: widget.api.resolve(item.streamUrl).toString(),
-              headers: widget.api.authorizationHeaders,
-              api: widget.api,
-            ),
-          )
-        : MaterialPageRoute<void>(
-            builder: (_) => ImageViewerScreen(
-              item: item,
-              url: widget.api.resolve(item.originalUrl).toString(),
-              headers: widget.api.authorizationHeaders,
-            ),
-          );
-    Navigator.of(context).push(route);
+    final index = _items.indexWhere((value) => value.id == item.id);
+    if (index < 0) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => MediaViewerScreen(
+          items: List<MediaItem>.unmodifiable(_items),
+          initialIndex: index,
+          api: widget.api,
+          onItemUpdated: _replaceItem,
+        ),
+      ),
+    );
   }
 
   void _showError(Object error) {
