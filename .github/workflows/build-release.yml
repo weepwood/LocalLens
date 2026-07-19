@@ -359,7 +359,7 @@ jobs:
             -DestinationPath (Join-Path $PWD "dist/$packageName.zip") `
             -Force
 
-      - name: Smoke test final Windows zip
+      - name: Verify final Windows zip integrity
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -374,23 +374,20 @@ jobs:
             $smokeRoot `
             -Force
 
-          $clientPath = Join-Path $smokeRoot "LocalLens.exe"
-          $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
-          $ffmpegPath = Join-Path $smokeRoot "runtime/media-tools/ffmpeg.exe"
-          $ffprobePath = Join-Path $smokeRoot "runtime/media-tools/ffprobe.exe"
-          $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
-          foreach ($path in @(
-            $clientPath,
-            $serverPath,
-            $ffmpegPath,
-            $ffprobePath,
-            $manifestPath
-          )) {
-            if (-not (Test-Path $path)) {
-              throw "Final Windows zip is missing $path"
+          $requiredFiles = @(
+            "LocalLens.exe",
+            "runtime/LocalLensServer.exe",
+            "runtime/media-tools/ffmpeg.exe",
+            "runtime/media-tools/ffprobe.exe",
+            "BUNDLE-MANIFEST.json"
+          )
+          foreach ($relativePath in $requiredFiles) {
+            if (-not (Test-Path (Join-Path $smokeRoot $relativePath))) {
+              throw "Final Windows zip is missing $relativePath"
             }
           }
 
+          $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if ($manifest.client_executable -ne "LocalLens.exe") {
             throw "Bundle manifest has the wrong client executable"
@@ -405,21 +402,31 @@ jobs:
             throw "Bundle manifest has the wrong FFmpeg archive checksum"
           }
 
-          $ffmpegVersion = & $ffmpegPath -version 2>&1 | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0 -or "$ffmpegVersion" -notmatch $env:FFMPEG_VERSION) {
-            throw "Bundled FFmpeg failed: $ffmpegVersion"
+          $ffmpegHash = (Get-FileHash `
+            (Join-Path $smokeRoot "runtime/media-tools/ffmpeg.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          $ffprobeHash = (Get-FileHash `
+            (Join-Path $smokeRoot "runtime/media-tools/ffprobe.exe") `
+            -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($ffmpegHash -ne $manifest.ffmpeg_sha256) {
+            throw "Final ZIP ffmpeg.exe hash differs from the packaged manifest"
           }
-          & $ffprobePath -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) {
-            throw "Bundled FFprobe failed"
+          if ($ffprobeHash -ne $manifest.ffprobe_sha256) {
+            throw "Final ZIP ffprobe.exe hash differs from the packaged manifest"
           }
 
+      - name: Smoke test embedded server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "local-lens-unified-smoke"
+          $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
           $port = 19527
-          $dataRoot = Join-Path $smokeRoot "LocalLensData"
-          $dataDir = Join-Path $dataRoot "data"
+          $dataDir = Join-Path $smokeRoot "LocalLensData\data"
           $mediaDir = Join-Path $smokeRoot "media"
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
+
           $configPath = Join-Path $smokeRoot "server-smoke.json"
           [ordered]@{
             listen_address = "127.0.0.1:$port"
@@ -427,8 +434,8 @@ jobs:
             server_name = "LocalLens CI Smoke"
             data_dir = $dataDir
             api_token = "ci-smoke-token-with-more-than-16-characters"
-            ffmpeg_path = $ffmpegPath
-            ffprobe_path = $ffprobePath
+            ffmpeg_path = ""
+            ffprobe_path = ""
             auto_scan = $false
             watch_files = $false
             thumbnail_workers = 1
@@ -448,12 +455,16 @@ jobs:
             )
           } | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 
+          $stdoutPath = Join-Path $smokeRoot "server-stdout.log"
+          $stderrPath = Join-Path $smokeRoot "server-stderr.log"
           $process = $null
           try {
             $process = Start-Process `
               -FilePath $serverPath `
               -ArgumentList @("-config", $configPath) `
               -WorkingDirectory $smokeRoot `
+              -RedirectStandardOutput $stdoutPath `
+              -RedirectStandardError $stderrPath `
               -PassThru
 
             $healthy = $false
@@ -473,6 +484,14 @@ jobs:
             if (-not $healthy) {
               throw "Embedded server health check timed out"
             }
+          } catch {
+            Write-Host "===== server-smoke.json ====="
+            Get-Content $configPath -ErrorAction SilentlyContinue
+            Write-Host "===== stdout ====="
+            Get-Content $stdoutPath -ErrorAction SilentlyContinue
+            Write-Host "===== stderr ====="
+            Get-Content $stderrPath -ErrorAction SilentlyContinue
+            throw
           } finally {
             if ($process -and -not $process.HasExited) {
               Stop-Process -Id $process.Id -Force
