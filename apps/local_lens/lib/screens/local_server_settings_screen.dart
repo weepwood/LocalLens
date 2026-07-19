@@ -35,6 +35,7 @@ class _LocalServerSettingsScreenState
   final _libraryPathController = TextEditingController();
   final _portController = TextEditingController();
   final _cacheController = TextEditingController();
+
   LocalServerConfig? _config;
   bool _loading = true;
   bool _saving = false;
@@ -88,12 +89,11 @@ class _LocalServerSettingsScreenState
         _loading = false;
       });
     } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = error.toString();
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString();
+      });
     }
   }
 
@@ -129,11 +129,11 @@ class _LocalServerSettingsScreenState
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _buildRuntimeCard(),
+            _runtimeCard(),
             const SizedBox(height: 16),
             _Section(
               title: '基本设置',
-              description: '配置本机服务器名称、端口和局域网访问。保存后会自动重启服务端。',
+              description: '修改服务器名称、端口和局域网访问。',
               icon: LucideIcons.serverCog,
               child: Column(
                 children: [
@@ -163,8 +163,8 @@ class _LocalServerSettingsScreenState
                     onChanged: _saving
                         ? null
                         : (value) => setState(() => _allowLan = value),
-                    title: const Text('允许局域网设备访问'),
-                    subtitle: const Text('关闭时只监听 127.0.0.1，手机将无法连接。'),
+                    title: const Text('允许手机和局域网设备访问'),
+                    subtitle: const Text('关闭后服务端只监听 127.0.0.1。'),
                   ),
                 ],
               ),
@@ -172,7 +172,7 @@ class _LocalServerSettingsScreenState
             const SizedBox(height: 16),
             _Section(
               title: '媒体库',
-              description: '第一版可视化设置管理主媒体库；更多媒体库仍可通过后续版本添加。',
+              description: '管理主媒体库目录和自动扫描策略。',
               icon: LucideIcons.library,
               child: Column(
                 children: [
@@ -216,7 +216,7 @@ class _LocalServerSettingsScreenState
             const SizedBox(height: 16),
             _Section(
               title: '后台任务',
-              description: 'Worker 越多处理越快，但会增加 SQLite、CPU 和磁盘压力。',
+              description: 'Worker 越多处理越快，但会增加 CPU、磁盘和 SQLite 压力。',
               icon: LucideIcons.gauge,
               child: Column(
                 children: [
@@ -224,6 +224,7 @@ class _LocalServerSettingsScreenState
                     label: '缩略图 Worker',
                     value: _thumbnailWorkers,
                     max: 8,
+                    enabled: !_saving,
                     onChanged: (value) =>
                         setState(() => _thumbnailWorkers = value),
                   ),
@@ -231,6 +232,7 @@ class _LocalServerSettingsScreenState
                     label: '元数据 Worker',
                     value: _metadataWorkers,
                     max: 8,
+                    enabled: !_saving,
                     onChanged: (value) =>
                         setState(() => _metadataWorkers = value),
                   ),
@@ -238,6 +240,7 @@ class _LocalServerSettingsScreenState
                     label: '视频转码 Worker',
                     value: _transcodeWorkers,
                     max: 4,
+                    enabled: !_saving,
                     onChanged: (value) =>
                         setState(() => _transcodeWorkers = value),
                   ),
@@ -247,7 +250,7 @@ class _LocalServerSettingsScreenState
             const SizedBox(height: 16),
             _Section(
               title: '视频转码',
-              description: 'FFmpeg 缺失时图片浏览仍可使用，但兼容视频转码不可用。',
+              description: '选择转码方式并限制 HLS 缓存空间。',
               icon: LucideIcons.clapperboard,
               child: Column(
                 children: [
@@ -255,10 +258,22 @@ class _LocalServerSettingsScreenState
                     initialValue: _transcodeHardware,
                     decoration: const InputDecoration(labelText: '转码方式'),
                     items: const [
-                      DropdownMenuItem(value: 'software', child: Text('CPU 软件编码')),
-                      DropdownMenuItem(value: 'nvenc', child: Text('NVIDIA NVENC')),
-                      DropdownMenuItem(value: 'qsv', child: Text('Intel Quick Sync')),
-                      DropdownMenuItem(value: 'amf', child: Text('AMD AMF')),
+                      DropdownMenuItem(
+                        value: 'software',
+                        child: Text('CPU 软件编码'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'nvenc',
+                        child: Text('NVIDIA NVENC'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'qsv',
+                        child: Text('Intel Quick Sync'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'amf',
+                        child: Text('AMD AMF'),
+                      ),
                     ],
                     onChanged: _saving
                         ? null
@@ -292,12 +307,12 @@ class _LocalServerSettingsScreenState
                     title: Text(
                       _config?.ffmpegPath.isNotEmpty == true
                           ? 'FFmpeg 已配置'
-                          : 'FFmpeg 未随安装包提供',
+                          : 'FFmpeg 未安装',
                     ),
                     subtitle: Text(
                       _config?.ffmpegPath.isNotEmpty == true
                           ? _config!.ffmpegPath
-                          : '将 ffmpeg.exe 和 ffprobe.exe 放入 runtime\\media-tools 后重新打开设置。',
+                          : r'将 ffmpeg.exe 和 ffprobe.exe 放入 runtime\media-tools。',
                     ),
                   ),
                 ],
@@ -327,7 +342,7 @@ class _LocalServerSettingsScreenState
     );
   }
 
-  Widget _buildRuntimeCard() {
+  Widget _runtimeCard() {
     return StreamBuilder<ServerRuntimeState>(
       stream: widget.supervisor.states,
       initialData: widget.supervisor.state,
@@ -340,53 +355,82 @@ class _LocalServerSettingsScreenState
           ServerRuntimeStatus.restarting => const Color(0xFFD58A18),
           ServerRuntimeStatus.failed ||
           ServerRuntimeStatus.portConflict ||
-          ServerRuntimeStatus.configurationError => Theme.of(context).colorScheme.error,
+          ServerRuntimeStatus.configurationError =>
+            Theme.of(context).colorScheme.error,
           ServerRuntimeStatus.stopped => Theme.of(context).colorScheme.outline,
         };
         return AppSurface(
           padding: const EdgeInsets.all(18),
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AppStatusPill(
-                label: _statusLabel(state.status),
-                icon: state.isRunning ? LucideIcons.circleCheck : LucideIcons.server,
-                color: color,
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  AppStatusPill(
+                    label: _statusLabel(state.status),
+                    icon: state.isRunning
+                        ? LucideIcons.circleCheck
+                        : LucideIcons.server,
+                    color: color,
+                  ),
+                  Text('端口 ${state.port}'),
+                  if (state.processId != null) Text('PID ${state.processId}'),
+                  if (state.version != null) Text('v${state.version}'),
+                ],
               ),
-              Text('端口 ${state.port}'),
-              if (state.processId != null) Text('PID ${state.processId}'),
-              if (state.version != null) Text('v${state.version}'),
-              const Spacer(),
-              OutlinedButton.icon(
-                onPressed: state.isBusy
-                    ? null
-                    : state.isRunning
-                        ? widget.supervisor.stop
-                        : widget.supervisor.start,
-                icon: Icon(
-                  state.isRunning ? LucideIcons.square : LucideIcons.play,
-                  size: 17,
+              if (state.lastError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  state.lastError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
-                label: Text(state.isRunning ? '停止' : '启动'),
-              ),
-              OutlinedButton.icon(
-                onPressed: state.isBusy
-                    ? null
-                    : () => widget.supervisor.restart(),
-                icon: const Icon(LucideIcons.refreshCw, size: 17),
-                label: const Text('重启'),
-              ),
-              IconButton(
-                tooltip: '打开数据目录',
-                onPressed: widget.supervisor.openDataDirectory,
-                icon: const Icon(LucideIcons.folderOpen),
-              ),
-              IconButton(
-                tooltip: '打开日志目录',
-                onPressed: widget.supervisor.openLogDirectory,
-                icon: const Icon(LucideIcons.fileText),
+              ],
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: state.isBusy
+                        ? null
+                        : () {
+                            if (state.isRunning) {
+                              unawaited(widget.supervisor.stop());
+                            } else {
+                              unawaited(widget.supervisor.start());
+                            }
+                          },
+                    icon: Icon(
+                      state.isRunning ? LucideIcons.square : LucideIcons.play,
+                      size: 17,
+                    ),
+                    label: Text(state.isRunning ? '停止' : '启动'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: state.isBusy
+                        ? null
+                        : () => unawaited(widget.supervisor.restart()),
+                    icon: const Icon(LucideIcons.refreshCw, size: 17),
+                    label: const Text('重启'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => unawaited(
+                      widget.supervisor.openDataDirectory(),
+                    ),
+                    icon: const Icon(LucideIcons.folderOpen, size: 17),
+                    label: const Text('数据目录'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => unawaited(
+                      widget.supervisor.openLogDirectory(),
+                    ),
+                    icon: const Icon(LucideIcons.fileText, size: 17),
+                    label: const Text('日志目录'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -396,7 +440,7 @@ class _LocalServerSettingsScreenState
   }
 
   Future<void> _chooseDirectory() async {
-    final path = await getDirectoryPath(initialDirectory: _libraryPathController.text);
+    final path = await getDirectoryPath();
     if (path == null || !mounted) return;
     setState(() => _libraryPathController.text = path);
   }
@@ -409,7 +453,8 @@ class _LocalServerSettingsScreenState
     });
     try {
       final port = int.parse(_portController.text.trim());
-      final lanAddress = _allowLan ? await widget.supervisor.discoverLanIPv4() : null;
+      final lanAddress =
+          _allowLan ? await widget.supervisor.discoverLanIPv4() : null;
       final currentLibrary = _config!.libraries.first;
       final config = _config!.copyWith(
         serverName: _serverNameController.text.trim(),
@@ -489,7 +534,10 @@ class _Section extends StatelessWidget {
                   children: [
                     Text(title, style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 3),
-                    Text(description, style: Theme.of(context).textTheme.bodySmall),
+                    Text(
+                      description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
                 ),
               ),
@@ -508,12 +556,14 @@ class _WorkerSlider extends StatelessWidget {
     required this.label,
     required this.value,
     required this.max,
+    required this.enabled,
     required this.onChanged,
   });
 
   final String label;
   final int value;
   final int max;
+  final bool enabled;
   final ValueChanged<int> onChanged;
 
   @override
@@ -528,10 +578,13 @@ class _WorkerSlider extends StatelessWidget {
             max: max.toDouble(),
             divisions: max - 1,
             label: '$value',
-            onChanged: (next) => onChanged(next.round()),
+            onChanged: enabled ? (next) => onChanged(next.round()) : null,
           ),
         ),
-        SizedBox(width: 32, child: Text('$value', textAlign: TextAlign.end)),
+        SizedBox(
+          width: 32,
+          child: Text('$value', textAlign: TextAlign.end),
+        ),
       ],
     );
   }
