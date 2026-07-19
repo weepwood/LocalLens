@@ -39,20 +39,37 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Test and build embedded server
+      - name: Test embedded server
         shell: pwsh
-        working-directory: server
+        run: |
+          $ErrorActionPreference = "Stop"
+          Push-Location server
+          try {
+            go mod download
+            if ($LASTEXITCODE -ne 0) { throw "go mod download failed" }
+            go test ./...
+            if ($LASTEXITCODE -ne 0) { throw "go test failed" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Build embedded server
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $stage = Join-Path $env:RUNNER_TEMP "locallens-embedded-server"
+          $serverOutput = Join-Path $stage "LocalLensServer.exe"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          go mod download
-          go test ./...
-          go build -trimpath -ldflags "-s -w -X main.version=0.6.0-dev" -o (Join-Path $stage "LocalLensServer.exe") .
-          Copy-Item config.example.json (Join-Path $stage "config.example.json")
-          if (!(Test-Path (Join-Path $stage "LocalLensServer.exe"))) {
-            throw "Embedded server executable was not produced"
+          Push-Location server
+          try {
+            go build -trimpath -ldflags "-s -w -X main.version=0.6.0-dev" -o "$serverOutput" .
+            if ($LASTEXITCODE -ne 0) { throw "embedded server build failed" }
+          } finally {
+            Pop-Location
           }
+          Copy-Item "server/config.example.json" (Join-Path $stage "config.example.json") -Force
+          if (!(Test-Path $serverOutput)) { throw "Embedded server executable was not produced" }
+          if ((Get-Item $serverOutput).Length -le 0) { throw "Embedded server executable is empty" }
 
       - name: Generate Windows platform project
         shell: pwsh
@@ -90,8 +107,8 @@ jobs:
           $mediaToolsDir = Join-Path $runtimeDir "media-tools"
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
           New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item (Join-Path $stage "LocalLensServer.exe") $runtimeDir
-          Copy-Item (Join-Path $stage "config.example.json") $runtimeDir
+          Copy-Item (Join-Path $stage "LocalLensServer.exe") $runtimeDir -Force
+          Copy-Item (Join-Path $stage "config.example.json") $runtimeDir -Force
 
           @"
           LocalLens Unified Windows 0.6.0-dev
