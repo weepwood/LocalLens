@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -17,6 +18,17 @@ abstract final class AppTheme {
   static const radius = 12.0;
   static const radiusLarge = 16.0;
 
+  static const _windowsFontFamily = 'Microsoft YaHei UI';
+  static const _fontFallback = <String>[
+    'Microsoft YaHei UI',
+    'Microsoft YaHei',
+    'Segoe UI',
+    'Noto Sans CJK SC',
+    'Noto Sans SC',
+    'PingFang SC',
+    'Arial Unicode MS',
+  ];
+
   static ThemeData get light => _materialTheme(Brightness.light);
   static ThemeData get dark => _materialTheme(Brightness.dark);
 
@@ -32,6 +44,7 @@ abstract final class AppTheme {
 
   static ThemeData _materialTheme(Brightness brightness) {
     final dark = brightness == Brightness.dark;
+    final windows = defaultTargetPlatform == TargetPlatform.windows;
     final scheme = ColorScheme.fromSeed(
       seedColor: dark ? accentDark : accent,
       brightness: brightness,
@@ -48,31 +61,15 @@ abstract final class AppTheme {
       scaffoldBackgroundColor: canvas,
       splashFactory: InkSparkle.splashFactory,
       visualDensity: VisualDensity.standard,
+      fontFamily: windows ? _windowsFontFamily : null,
     );
+    final textTheme = _localizedTextTheme(base.textTheme, windows: windows);
 
     return base.copyWith(
-      textTheme: base.textTheme.copyWith(
-        headlineLarge: base.textTheme.headlineLarge?.copyWith(
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.8,
-        ),
-        headlineMedium: base.textTheme.headlineMedium?.copyWith(
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.5,
-        ),
-        headlineSmall: base.textTheme.headlineSmall?.copyWith(
-          fontWeight: FontWeight.w700,
-          letterSpacing: -0.3,
-        ),
-        titleLarge: base.textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w700,
-        ),
-        titleMedium: base.textTheme.titleMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
-        labelLarge: base.textTheme.labelLarge?.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+      textTheme: textTheme,
+      primaryTextTheme: _localizedTextTheme(
+        base.primaryTextTheme,
+        windows: windows,
       ),
       appBarTheme: AppBarTheme(
         elevation: 0,
@@ -80,7 +77,7 @@ abstract final class AppTheme {
         centerTitle: false,
         backgroundColor: canvas,
         surfaceTintColor: Colors.transparent,
-        titleTextStyle: base.textTheme.titleLarge?.copyWith(
+        titleTextStyle: textTheme.titleLarge?.copyWith(
           color: scheme.onSurface,
           fontWeight: FontWeight.w700,
         ),
@@ -105,7 +102,10 @@ abstract final class AppTheme {
         fillColor: surface,
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
-        hintStyle: TextStyle(color: scheme.onSurfaceVariant.withValues(alpha: 0.75)),
+        hintStyle: TextStyle(
+          color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
+          fontFamilyFallback: _fontFallback,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: border),
@@ -124,7 +124,10 @@ abstract final class AppTheme {
           minimumSize: const Size(0, 40),
           padding: const EdgeInsets.symmetric(horizontal: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontFamilyFallback: _fontFallback,
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -133,14 +136,20 @@ abstract final class AppTheme {
           padding: const EdgeInsets.symmetric(horizontal: 15),
           side: BorderSide(color: border),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontFamilyFallback: _fontFallback,
+          ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           minimumSize: const Size(0, 38),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontFamilyFallback: _fontFallback,
+          ),
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
@@ -160,6 +169,7 @@ abstract final class AppTheme {
             fontWeight: states.contains(WidgetState.selected)
                 ? FontWeight.w700
                 : FontWeight.w500,
+            fontFamilyFallback: _fontFallback,
           ),
         ),
       ),
@@ -167,6 +177,7 @@ abstract final class AppTheme {
         side: BorderSide(color: border),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+        labelStyle: textTheme.bodyMedium,
       ),
       dropdownMenuTheme: DropdownMenuThemeData(
         inputDecorationTheme: InputDecorationTheme(
@@ -203,12 +214,79 @@ abstract final class AppTheme {
         textStyle: TextStyle(
           color: dark ? const Color(0xFF202124) : Colors.white,
           fontSize: 12,
+          fontFamilyFallback: _fontFallback,
         ),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        contentTextStyle: textTheme.bodyMedium?.copyWith(color: Colors.white),
       ),
+    );
+  }
+
+  static TextTheme _localizedTextTheme(
+    TextTheme source, {
+    required bool windows,
+  }) {
+    TextStyle? style(
+      TextStyle? value, {
+      FontWeight? weight,
+      double? height,
+      double? letterSpacing,
+    }) {
+      return value?.copyWith(
+        fontFamily: windows ? _windowsFontFamily : value.fontFamily,
+        fontFamilyFallback: _fontFallback,
+        fontWeight: weight,
+        height: height,
+        letterSpacing: letterSpacing,
+      );
+    }
+
+    return source.copyWith(
+      displayLarge: style(source.displayLarge, height: 1.2, letterSpacing: 0),
+      displayMedium: style(source.displayMedium, height: 1.2, letterSpacing: 0),
+      displaySmall: style(source.displaySmall, height: 1.2, letterSpacing: 0),
+      headlineLarge: style(
+        source.headlineLarge,
+        weight: FontWeight.w700,
+        height: 1.25,
+        letterSpacing: 0,
+      ),
+      headlineMedium: style(
+        source.headlineMedium,
+        weight: FontWeight.w700,
+        height: 1.25,
+        letterSpacing: 0,
+      ),
+      headlineSmall: style(
+        source.headlineSmall,
+        weight: FontWeight.w700,
+        height: 1.25,
+        letterSpacing: 0,
+      ),
+      titleLarge: style(
+        source.titleLarge,
+        weight: FontWeight.w700,
+        height: 1.3,
+      ),
+      titleMedium: style(
+        source.titleMedium,
+        weight: FontWeight.w600,
+        height: 1.3,
+      ),
+      titleSmall: style(source.titleSmall, height: 1.3),
+      bodyLarge: style(source.bodyLarge, height: 1.4),
+      bodyMedium: style(source.bodyMedium, height: 1.4),
+      bodySmall: style(source.bodySmall, height: 1.4),
+      labelLarge: style(
+        source.labelLarge,
+        weight: FontWeight.w600,
+        height: 1.25,
+      ),
+      labelMedium: style(source.labelMedium, height: 1.25),
+      labelSmall: style(source.labelSmall, height: 1.25),
     );
   }
 }
