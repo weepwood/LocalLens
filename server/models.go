@@ -18,19 +18,22 @@ var mediaTypes = map[string]string{
 }
 
 type Config struct {
-	ListenAddress    string    `json:"listen_address"`
-	PublicURL        string    `json:"public_url"`
-	ServerName       string    `json:"server_name"`
-	DataDir          string    `json:"data_dir"`
-	APIToken         string    `json:"api_token"`
-	FFmpegPath       string    `json:"ffmpeg_path"`
-	FFprobePath      string    `json:"ffprobe_path"`
-	AutoScan         bool      `json:"auto_scan"`
-	WatchFiles       bool      `json:"watch_files"`
-	ThumbnailWorkers int       `json:"thumbnail_workers"`
-	MetadataWorkers  int       `json:"metadata_workers"`
-	PairingTTLMinutes int      `json:"pairing_ttl_minutes"`
-	Libraries        []Library `json:"libraries"`
+	ListenAddress       string    `json:"listen_address"`
+	PublicURL           string    `json:"public_url"`
+	ServerName          string    `json:"server_name"`
+	DataDir             string    `json:"data_dir"`
+	APIToken            string    `json:"api_token"`
+	FFmpegPath          string    `json:"ffmpeg_path"`
+	FFprobePath         string    `json:"ffprobe_path"`
+	AutoScan            bool      `json:"auto_scan"`
+	WatchFiles          bool      `json:"watch_files"`
+	ThumbnailWorkers    int       `json:"thumbnail_workers"`
+	MetadataWorkers     int       `json:"metadata_workers"`
+	TranscodeWorkers    int       `json:"transcode_workers"`
+	TranscodeCacheGB    int       `json:"transcode_cache_gb"`
+	TranscodeHardware   string    `json:"transcode_hardware"`
+	PairingTTLMinutes   int       `json:"pairing_ttl_minutes"`
+	Libraries           []Library `json:"libraries"`
 }
 
 type Library struct {
@@ -42,30 +45,30 @@ type Library struct {
 }
 
 type Media struct {
-	ID               string     `json:"id"`
-	LibraryID        string     `json:"libraryId"`
-	RootPath         string     `json:"-"`
-	RelativePath     string     `json:"relativePath"`
-	FolderPath       string     `json:"folderPath"`
-	FileName         string     `json:"fileName"`
-	Type             string     `json:"type"`
-	MIMEType         string     `json:"mimeType"`
-	SizeBytes        int64      `json:"sizeBytes"`
-	ModifiedAt       time.Time  `json:"modifiedAt"`
-	CapturedAt       time.Time  `json:"capturedAt"`
-	CapturedAtSource string     `json:"capturedAtSource"`
-	Width            int        `json:"width"`
-	Height           int        `json:"height"`
-	DurationMS       int64      `json:"durationMs"`
-	Codec            string     `json:"codec"`
-	Latitude         *float64   `json:"latitude,omitempty"`
-	Longitude        *float64   `json:"longitude,omitempty"`
-	CameraModel      string     `json:"cameraModel,omitempty"`
-	MetadataStatus   string     `json:"metadataStatus"`
-	MetadataError    string     `json:"metadataError,omitempty"`
-	Missing          bool       `json:"missing"`
-	Favorite         bool       `json:"favorite"`
-	Rating           int        `json:"rating"`
+	ID               string    `json:"id"`
+	LibraryID        string    `json:"libraryId"`
+	RootPath         string    `json:"-"`
+	RelativePath     string    `json:"relativePath"`
+	FolderPath       string    `json:"folderPath"`
+	FileName         string    `json:"fileName"`
+	Type             string    `json:"type"`
+	MIMEType         string    `json:"mimeType"`
+	SizeBytes        int64     `json:"sizeBytes"`
+	ModifiedAt       time.Time `json:"modifiedAt"`
+	CapturedAt       time.Time `json:"capturedAt"`
+	CapturedAtSource string    `json:"capturedAtSource"`
+	Width            int       `json:"width"`
+	Height           int       `json:"height"`
+	DurationMS       int64     `json:"durationMs"`
+	Codec            string    `json:"codec"`
+	Latitude         *float64  `json:"latitude,omitempty"`
+	Longitude        *float64  `json:"longitude,omitempty"`
+	CameraModel      string    `json:"cameraModel,omitempty"`
+	MetadataStatus   string    `json:"metadataStatus"`
+	MetadataError    string    `json:"metadataError,omitempty"`
+	Missing          bool      `json:"missing"`
+	Favorite         bool      `json:"favorite"`
+	Rating           int       `json:"rating"`
 }
 
 func (m Media) Path() string {
@@ -103,10 +106,10 @@ type FolderInfo struct {
 }
 
 type ThumbnailJob struct {
-	MediaID         string
-	Width           int
+	MediaID          string
+	Width            int
 	SourceModifiedAt string
-	Attempts        int
+	Attempts         int
 }
 
 type MetadataJob struct {
@@ -183,6 +186,7 @@ type App struct {
 	workerWG      sync.WaitGroup
 	thumbnailWake chan struct{}
 	metadataWake  chan struct{}
+	transcodeWake chan struct{}
 	watcher       *FileWatcher
 	pairing       *PairingManager
 }
@@ -190,13 +194,14 @@ type App struct {
 func newApp(cfg Config, db *sql.DB, logger *slog.Logger) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &App{
-		cfg: cfg,
-		db: db,
-		logger: logger,
-		serviceCtx: ctx,
+		cfg:           cfg,
+		db:            db,
+		logger:        logger,
+		serviceCtx:    ctx,
 		serviceCancel: cancel,
 		thumbnailWake: make(chan struct{}, 1),
-		metadataWake: make(chan struct{}, 1),
-		pairing: &PairingManager{sessions: make(map[string]PairingSession)},
+		metadataWake:  make(chan struct{}, 1),
+		transcodeWake: make(chan struct{}, 1),
+		pairing:       &PairingManager{sessions: make(map[string]PairingSession)},
 	}
 }
