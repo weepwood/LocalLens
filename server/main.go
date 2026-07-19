@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var version = "0.5.0-dev"
+var version = "0.5.0"
 
 func main() {
 	configPath := flag.String("config", "./config.json", "path to JSON config")
@@ -94,7 +94,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           app.routesV05(),
+		Handler:           app.routesV05Release(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
