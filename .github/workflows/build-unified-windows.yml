@@ -44,11 +44,15 @@ jobs:
         working-directory: server
         run: |
           $ErrorActionPreference = "Stop"
+          $stage = Join-Path $env:RUNNER_TEMP "locallens-embedded-server"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
           go mod download
           go test ./...
-          New-Item -ItemType Directory -Force -Path ../apps/local_lens/build/embedded-server | Out-Null
-          go build -trimpath -ldflags "-s -w -X main.version=0.6.0-dev" -o ../apps/local_lens/build/embedded-server/LocalLensServer.exe .
-          Copy-Item config.example.json ../apps/local_lens/build/embedded-server/config.example.json
+          go build -trimpath -ldflags "-s -w -X main.version=0.6.0-dev" -o (Join-Path $stage "LocalLensServer.exe") .
+          Copy-Item config.example.json (Join-Path $stage "config.example.json")
+          if (!(Test-Path (Join-Path $stage "LocalLensServer.exe"))) {
+            throw "Embedded server executable was not produced"
+          }
 
       - name: Generate Windows platform project
         shell: pwsh
@@ -76,6 +80,7 @@ jobs:
         working-directory: apps/local_lens
         run: |
           $ErrorActionPreference = "Stop"
+          $stage = Join-Path $env:RUNNER_TEMP "locallens-embedded-server"
           $packageName = "LocalLens-Windows-x64"
           $packageDir = Join-Path $PWD "dist/$packageName"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
@@ -85,8 +90,8 @@ jobs:
           $mediaToolsDir = Join-Path $runtimeDir "media-tools"
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
           New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item "build/embedded-server/LocalLensServer.exe" $runtimeDir
-          Copy-Item "build/embedded-server/config.example.json" $runtimeDir
+          Copy-Item (Join-Path $stage "LocalLensServer.exe") $runtimeDir
+          Copy-Item (Join-Path $stage "config.example.json") $runtimeDir
 
           @"
           LocalLens Unified Windows 0.6.0-dev
@@ -112,8 +117,12 @@ jobs:
         working-directory: apps/local_lens
         run: |
           $archive = "dist/LocalLens-Windows-x64.zip"
-          if (!(Test-Path $archive)) { throw "Unified archive is missing" }
-          if ((Get-Item $archive).Length -le 0) { throw "Unified archive is empty" }
+          $server = "dist/LocalLens-Windows-x64/runtime/LocalLensServer.exe"
+          $client = "dist/LocalLens-Windows-x64/LocalLens.exe"
+          foreach ($path in @($archive, $server, $client)) {
+            if (!(Test-Path $path)) { throw "Required unified package file is missing: $path" }
+            if ((Get-Item $path).Length -le 0) { throw "Unified package file is empty: $path" }
+          }
 
       - name: Upload unified Windows artifact
         uses: actions/upload-artifact@v7
