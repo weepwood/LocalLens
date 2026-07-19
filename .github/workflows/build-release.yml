@@ -5,8 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -32,7 +31,6 @@ jobs:
     defaults:
       run:
         working-directory: server
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -45,8 +43,10 @@ jobs:
             server/go.mod
             server/go.sum
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Normalize and download dependencies
+        run: |
+          go mod tidy
+          go mod download
 
       - name: Test server
         run: go test ./...
@@ -71,14 +71,12 @@ jobs:
           go build -trimpath `
             -ldflags "-s -w -X main.version=$version" `
             -o (Join-Path $packageDir "LocalLensServer.exe") .
-
           go build -trimpath `
             -ldflags "-H=windowsgui -s -w -X main.version=$version" `
             -o (Join-Path $packageDir "LocalLensServerEmbedded.exe") .
 
           Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
           New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "bin") | Out-Null
-
           @"
           LocalLens Server $version
           ==========================
@@ -86,15 +84,16 @@ jobs:
           Standalone mode:
           1. Copy config.example.json to config.json.
           2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when video transcoding is needed.
+          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when needed.
           4. Start LocalLensServer.exe -config .\config.json.
 
           LocalLensServerEmbedded.exe is used by the unified Windows application.
-          Ordinary Windows users should download LocalLens-Windows-x64.zip.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
+          "@ | Set-Content (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
-          $zipPath = Join-Path $PWD "dist/$packageName.zip"
-          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -Force
+          Compress-Archive `
+            -Path "$packageDir\*" `
+            -DestinationPath (Join-Path $PWD "dist/$packageName.zip") `
+            -Force
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v7
@@ -111,7 +110,6 @@ jobs:
     defaults:
       run:
         working-directory: apps/local_lens
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -156,7 +154,10 @@ jobs:
           } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
             $version = $env:MANUAL_TAG.TrimStart("v")
           }
-          flutter build windows --release --build-name $version --build-number $env:GITHUB_RUN_NUMBER
+          flutter build windows `
+            --release `
+            --build-name $version `
+            --build-number $env:GITHUB_RUN_NUMBER
 
       - name: Package unified Windows application
         shell: pwsh
@@ -167,7 +168,6 @@ jobs:
           $packageName = "LocalLens-Windows-x64"
           $packageDir = Join-Path $PWD "dist/$packageName"
           $releaseDir = Join-Path $PWD "build/windows/x64/runner/Release"
-
           if (-not (Test-Path $releaseDir)) {
             throw "Flutter Windows release directory was not generated: $releaseDir"
           }
@@ -178,17 +178,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           Copy-Item "$releaseDir\*" $packageDir -Recurse -Force
 
-          # Flutter derives the executable from the Dart project name and normally
-          # produces local_lens.exe. The public bundle contract uses LocalLens.exe.
           $clientExe = Get-ChildItem $packageDir -File -Filter "*.exe" |
             Where-Object { $_.Name -notlike "LocalLensServer*" } |
             Select-Object -First 1
           if (-not $clientExe) {
             throw "Flutter build output does not contain a desktop executable"
           }
-          $normalizedClientExe = Join-Path $packageDir "LocalLens.exe"
-          if ($clientExe.FullName -ne $normalizedClientExe) {
-            Move-Item -Path $clientExe.FullName -Destination $normalizedClientExe -Force
+          $targetExe = Join-Path $packageDir "LocalLens.exe"
+          if ($clientExe.FullName -ne $targetExe) {
+            Move-Item $clientExe.FullName $targetExe -Force
           }
 
           $version = "0.6.1"
@@ -198,8 +196,11 @@ jobs:
             $version = $env:MANUAL_TAG.TrimStart("v")
           }
 
-          $serverArtifactDir = Join-Path $env:RUNNER_TEMP "local-lens-server"
-          $serverZip = Get-ChildItem $serverArtifactDir -Filter "*.zip" -Recurse | Select-Object -First 1
+          $serverZip = Get-ChildItem `
+            (Join-Path $env:RUNNER_TEMP "local-lens-server") `
+            -Filter "*.zip" `
+            -Recurse |
+            Select-Object -First 1
           if (-not $serverZip) {
             throw "Embedded server artifact zip was not found"
           }
@@ -208,9 +209,9 @@ jobs:
           if (Test-Path $serverExtractDir) {
             Remove-Item $serverExtractDir -Recurse -Force
           }
-          Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
-
-          $embeddedServer = Get-ChildItem $serverExtractDir `
+          Expand-Archive $serverZip.FullName $serverExtractDir -Force
+          $embeddedServer = Get-ChildItem `
+            $serverExtractDir `
             -Filter "LocalLensServerEmbedded.exe" `
             -Recurse |
             Select-Object -First 1
@@ -221,18 +222,21 @@ jobs:
           $runtimeDir = Join-Path $packageDir "runtime"
           $mediaToolsDir = Join-Path $runtimeDir "media-tools"
           New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item $embeddedServer.FullName (Join-Path $runtimeDir "LocalLensServer.exe") -Force
+          Copy-Item `
+            $embeddedServer.FullName `
+            (Join-Path $runtimeDir "LocalLensServer.exe") `
+            -Force
 
           @"
           Optional media tools
           ====================
 
-          Put ffmpeg.exe and ffprobe.exe in this directory to enable video
-          thumbnails, broad metadata compatibility and HLS transcoding.
-          The embedded Go server is already included and does not require FFmpeg.
-          "@ | Set-Content -Path (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
+          Put ffmpeg.exe and ffprobe.exe here to enable video thumbnails,
+          broad metadata compatibility and HLS transcoding.
+          The embedded Go server is already included.
+          "@ | Set-Content (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
 
-          $manifest = [ordered]@{
+          [ordered]@{
             package = $packageName
             client_version = $version
             server_version = $version
@@ -241,65 +245,67 @@ jobs:
             client_executable = "LocalLens.exe"
             embedded_server = "runtime/LocalLensServer.exe"
             built_at_utc = (Get-Date).ToUniversalTime().ToString("o")
-          }
-          $manifest | ConvertTo-Json | Set-Content `
-            -Path (Join-Path $packageDir "BUNDLE-MANIFEST.json") `
+          } | ConvertTo-Json | Set-Content `
+            (Join-Path $packageDir "BUNDLE-MANIFEST.json") `
             -Encoding UTF8
 
           @"
           LocalLens Windows $version
           ==========================
 
-          This is the unified Windows package. Launch LocalLens.exe only.
-          It starts runtime\LocalLensServer.exe and connects through 127.0.0.1.
+          Launch LocalLens.exe only. It starts runtime\LocalLensServer.exe.
           Server data is stored under %LOCALAPPDATA%\LocalLens.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
+          "@ | Set-Content (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
 
           $requiredFiles = @(
-            (Join-Path $packageDir "LocalLens.exe"),
-            (Join-Path $packageDir "flutter_windows.dll"),
-            (Join-Path $packageDir "runtime/LocalLensServer.exe"),
-            (Join-Path $packageDir "runtime/media-tools/README.txt"),
-            (Join-Path $packageDir "BUNDLE-MANIFEST.json")
+            "LocalLens.exe",
+            "flutter_windows.dll",
+            "runtime/LocalLensServer.exe",
+            "runtime/media-tools/README.txt",
+            "BUNDLE-MANIFEST.json"
           )
-          foreach ($requiredFile in $requiredFiles) {
-            if (-not (Test-Path $requiredFile)) {
-              throw "Unified Windows package is missing $requiredFile"
+          foreach ($relativePath in $requiredFiles) {
+            $requiredPath = Join-Path $packageDir $relativePath
+            if (-not (Test-Path $requiredPath)) {
+              throw "Unified Windows package is missing $relativePath"
             }
           }
 
-          $zipPath = Join-Path $PWD "dist/$packageName.zip"
-          Compress-Archive -Path "$packageDir\*" -DestinationPath $zipPath -Force
+          Compress-Archive `
+            -Path "$packageDir\*" `
+            -DestinationPath (Join-Path $PWD "dist/$packageName.zip") `
+            -Force
 
       - name: Smoke test final Windows zip
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $packageName = "LocalLens-Windows-x64"
-          $zipPath = Join-Path $PWD "dist/$packageName.zip"
           $smokeRoot = Join-Path $env:RUNNER_TEMP "local-lens-unified-smoke"
-
           if (Test-Path $smokeRoot) {
             Remove-Item $smokeRoot -Recurse -Force
           }
           New-Item -ItemType Directory -Force -Path $smokeRoot | Out-Null
-          Expand-Archive -Path $zipPath -DestinationPath $smokeRoot -Force
+          Expand-Archive `
+            (Join-Path $PWD "dist/$packageName.zip") `
+            $smokeRoot `
+            -Force
 
           $clientPath = Join-Path $smokeRoot "LocalLens.exe"
           $serverPath = Join-Path $smokeRoot "runtime/LocalLensServer.exe"
           $manifestPath = Join-Path $smokeRoot "BUNDLE-MANIFEST.json"
-          foreach ($requiredPath in @($clientPath, $serverPath, $manifestPath)) {
-            if (-not (Test-Path $requiredPath)) {
-              throw "Final Windows zip is missing $requiredPath"
+          foreach ($path in @($clientPath, $serverPath, $manifestPath)) {
+            if (-not (Test-Path $path)) {
+              throw "Final Windows zip is missing $path"
             }
           }
 
           $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if ($manifest.client_executable -ne "LocalLens.exe") {
-            throw "Bundle manifest does not describe LocalLens.exe"
+            throw "Bundle manifest has the wrong client executable"
           }
           if ($manifest.embedded_server -ne "runtime/LocalLensServer.exe") {
-            throw "Bundle manifest does not describe the embedded server"
+            throw "Bundle manifest has the wrong embedded server path"
           }
 
           $port = 19527
@@ -308,7 +314,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
           $configPath = Join-Path $smokeRoot "server-smoke.json"
-          $config = [ordered]@{
+          [ordered]@{
             listen_address = "127.0.0.1:$port"
             public_url = ""
             server_name = "LocalLens CI Smoke"
@@ -333,8 +339,7 @@ jobs:
                 enabled = $true
               }
             )
-          }
-          $config | ConvertTo-Json -Depth 5 | Set-Content -Path $configPath -Encoding UTF8
+          } | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
 
           $process = $null
           try {
@@ -348,7 +353,7 @@ jobs:
             for ($attempt = 0; $attempt -lt 40; $attempt++) {
               Start-Sleep -Milliseconds 500
               if ($process.HasExited) {
-                throw "Embedded server exited before health check with code $($process.ExitCode)"
+                throw "Embedded server exited with code $($process.ExitCode)"
               }
               try {
                 Invoke-RestMethod `
@@ -356,12 +361,10 @@ jobs:
                   -TimeoutSec 2 | Out-Null
                 $healthy = $true
                 break
-              } catch {
-                # Server may still be initializing SQLite and HTTP routes.
-              }
+              } catch {}
             }
             if (-not $healthy) {
-              throw "Embedded server did not pass /api/v1/health within 20 seconds"
+              throw "Embedded server health check timed out"
             }
           } finally {
             if ($process -and -not $process.HasExited) {
@@ -384,7 +387,6 @@ jobs:
     defaults:
       run:
         working-directory: apps/local_lens
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -460,7 +462,8 @@ jobs:
             --build-name "$VERSION" \
             --build-number "${GITHUB_RUN_NUMBER}"
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/LocalLens-Android-universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            dist/LocalLens-Android-universal.apk
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v7
@@ -472,10 +475,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs:
-      - server-windows
-      - flutter-windows
-      - flutter-android
+    needs: [server-windows, flutter-windows, flutter-android]
     runs-on: ubuntu-latest
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
@@ -485,7 +485,6 @@ jobs:
        startsWith(github.event.head_commit.message, 'release:'))
     permissions:
       contents: write
-
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v5
@@ -524,12 +523,10 @@ jobs:
           else
             TAG="v0.6.1"
           fi
-
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: $TAG" >&2
             exit 1
           fi
-
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Create or update release
@@ -539,12 +536,10 @@ jobs:
           TAG: ${{ steps.release_tag.outputs.tag }}
         run: |
           set -euo pipefail
-
           PRERELEASE_ARGS=()
           if [[ "$TAG" == *-* ]]; then
             PRERELEASE_ARGS+=(--prerelease)
           fi
-
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* \
               --repo "$GITHUB_REPOSITORY" \
