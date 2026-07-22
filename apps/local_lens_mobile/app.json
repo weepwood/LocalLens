@@ -17,13 +17,20 @@
     },
     "android": {
       "package": "com.weepwood.locallens.mobile",
-      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.CAMERA"
       ]
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
       "expo-camera",
       "expo-secure-store",
       [
