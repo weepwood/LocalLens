@@ -17,7 +17,12 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 chrono.workspace = true
+hex.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+kamadak-exif = "0.6"
 local-lens-core = { path = "../local-lens-core" }
+notify = "8"
+qrcode = { version = "0.14", features = ["image"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -27,3 +32,5 @@ tower = "0.5"
 tower-http = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+urlencoding = "2"
+walkdir = "2"
