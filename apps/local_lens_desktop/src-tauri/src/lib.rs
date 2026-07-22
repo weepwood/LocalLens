@@ -9,7 +9,7 @@ use std::{
 use local_lens_core::{AppConfig, LibraryConfig};
 use serde::Serialize;
 use tauri::{Manager, State};
-use tokio::sync::oneshot;
+use tokio::{sync::oneshot, time::{sleep, Duration}};
 
 #[derive(Clone)]
 struct RuntimeState {
@@ -47,12 +47,7 @@ impl RuntimeState {
     }
 
     fn stop(&self) -> Result<(), String> {
-        if let Some(sender) = self
-            .shutdown
-            .lock()
-            .map_err(|_| "服务状态锁已损坏")?
-            .take()
-        {
+        if let Some(sender) = self.shutdown.lock().map_err(|_| "服务状态锁已损坏")?.take() {
             let _ = sender.send(());
         }
         self.running.store(false, Ordering::SeqCst);
@@ -94,6 +89,30 @@ fn runtime_status(state: State<'_, RuntimeState>) -> Result<RuntimeStatus, Strin
         data_dir: config.data_dir.to_string_lossy().to_string(),
         backend: "Rust",
     })
+}
+
+#[tauri::command]
+fn read_config(state: State<'_, RuntimeState>) -> Result<AppConfig, String> {
+    AppConfig::load(&state.config_path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn save_config(
+    state: State<'_, RuntimeState>,
+    mut config: AppConfig,
+) -> Result<(), String> {
+    let runtime = state.inner().clone();
+    let base = runtime
+        .config_path
+        .parent()
+        .ok_or_else(|| "配置文件目录无效".to_string())?;
+    config.normalize(base).map_err(|error| error.to_string())?;
+    runtime.stop()?;
+    config
+        .save(&runtime.config_path)
+        .map_err(|error| error.to_string())?;
+    sleep(Duration::from_millis(800)).await;
+    runtime.start().await
 }
 
 fn ensure_default_config(config_path: &PathBuf, data_dir: PathBuf) -> anyhow::Result<()> {
@@ -171,6 +190,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             runtime_status,
+            read_config,
+            save_config,
             start_server,
             stop_server
         ])
