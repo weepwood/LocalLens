@@ -46,9 +46,25 @@ jobs:
       - name: Normalize Rust formatting in workspace
         run: cargo fmt --all
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee clippy.log
       - name: Test Rust workspace
-        run: cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace 2>&1 | tee test.log
+      - name: Upload Rust logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Rust-Logs
+          path: |
+            rust/clippy.log
+            rust/test.log
+          if-no-files-found: warn
+          retention-days: 7
 
   tauri-windows:
     name: Tauri 2 desktop · Windows
@@ -76,9 +92,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
       - name: Build React frontend
-        run: npm run build
+        shell: pwsh
+        run: |
+          npm run build 2>&1 | Tee-Object -FilePath frontend-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check Tauri Rust host
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        shell: pwsh
+        run: |
+          cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | Tee-Object -FilePath tauri-check.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Tauri logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Tauri-Logs
+          path: |
+            apps/local_lens_desktop/frontend-build.log
+            apps/local_lens_desktop/tauri-check.log
+          if-no-files-found: warn
+          retention-days: 7
 
   android-native:
     name: Kotlin Android native APK
@@ -99,7 +131,18 @@ jobs:
         with:
           gradle-version: "8.13"
       - name: Build native Android debug APK
-        run: gradle :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --stacktrace 2>&1 | tee android-build.log
+      - name: Upload Android log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Android-Logs
+          path: apps/local_lens_android/android-build.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload Android APK
         uses: actions/upload-artifact@v7
         with:
