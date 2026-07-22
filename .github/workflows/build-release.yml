@@ -24,6 +24,7 @@ concurrency:
 
 env:
   FLUTTER_VERSION: "3.41.9"
+  NODE_VERSION: "22.13.1"
 
 jobs:
   server-windows:
@@ -178,6 +179,7 @@ jobs:
           if (-not $serverZip) {
             throw "Embedded server artifact zip was not found"
           }
+
           $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
           Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
           $embeddedServer = Get-ChildItem $serverExtractDir -Filter "LocalLensServerEmbedded.exe" -Recurse | Select-Object -First 1
@@ -222,16 +224,23 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  flutter-android:
-    name: Flutter client · Android APK
+  react-native-android:
+    name: React Native client · Android APK
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/local_lens
+        working-directory: apps/local_lens_mobile
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/local_lens_mobile/package.json
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -239,50 +248,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
-      - name: Generate Android platform project
-        shell: bash
+      - name: Validate React Native mobile project
         run: |
-          set -euo pipefail
-          flutter create \
-            --project-name local_lens \
-            --org com.weepwood \
-            --platforms android \
-            .
+          npx expo install --check
+          npx expo-doctor
+          npm run typecheck
 
-          python3 - <<'PY'
-          from pathlib import Path
-
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-          text = manifest.read_text(encoding="utf-8")
-          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-          permissions = [
-              '<uses-permission android:name="android.permission.INTERNET" />',
-              '<uses-permission android:name="android.permission.CAMERA" />',
-          ]
-          for permission in permissions:
-              if permission not in text:
-                  text = text.replace(marker, marker + "\n    " + permission, 1)
-          if 'android:usesCleartextTraffic="true"' not in text:
-              text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-          manifest.write_text(text, encoding="utf-8")
-          PY
-
-          flutter pub get
-
-      - name: Test Flutter client
-        run: flutter test
-
-      - name: Analyze Flutter client
-        run: flutter analyze
-
-      - name: Build Android APK
+      - name: Resolve Android version
         shell: bash
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
@@ -295,18 +270,40 @@ jobs:
             VERSION="${MANUAL_TAG#v}"
           fi
 
-          flutter build apk \
-            --release \
-            --build-name "$VERSION" \
-            --build-number "${GITHUB_RUN_NUMBER}"
+          VERSION="$VERSION" BUILD_NUMBER="${GITHUB_RUN_NUMBER}" node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'app.json';
+          const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+          config.expo.version = process.env.VERSION;
+          config.expo.android = {
+            ...config.expo.android,
+            versionCode: Number(process.env.BUILD_NUMBER),
+          };
+          fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
+      - name: Generate Android project
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Build Android APK
+        working-directory: apps/local_lens_mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleRelease --no-daemon
+
+      - name: Prepare Android artifact
+        run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/LocalLens-Android-universal.apk
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            dist/LocalLens-Android-universal.apk
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v7
         with:
           name: LocalLens-Android-universal
-          path: apps/local_lens/dist/LocalLens-Android-universal.apk
+          path: apps/local_lens_mobile/dist/LocalLens-Android-universal.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -315,7 +312,7 @@ jobs:
     needs:
       - server-windows
       - flutter-windows
-      - flutter-android
+      - react-native-android
     runs-on: ubuntu-latest
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
