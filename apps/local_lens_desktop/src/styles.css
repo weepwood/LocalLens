@@ -1,0 +1,58 @@
+:root {
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #172033;
+  background: #eef2f8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 980px; min-height: 100vh; background: radial-gradient(circle at top left, #f8faff 0, #eef2f8 46%, #e8edf6 100%); }
+button { font: inherit; }
+
+.app-shell { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 40px; }
+.topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+.topbar h1 { margin: 0; font-size: 23px; letter-spacing: -0.03em; }
+.topbar p { margin: 3px 0 0; color: #69748a; font-size: 13px; }
+.brand-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; color: white; font-weight: 800; background: linear-gradient(145deg, #6f7bf0, #4555c7); box-shadow: 0 10px 24px rgba(76, 91, 205, .28); }
+.status-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+.status-pill.online { color: #176b47; background: #dff7ec; }
+.status-pill.offline { color: #8b3a44; background: #ffe8eb; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+.hero-card, .settings-card, .info-card { border: 1px solid rgba(129, 145, 177, .18); background: rgba(255, 255, 255, .86); box-shadow: 0 18px 44px rgba(49, 62, 94, .09); backdrop-filter: blur(18px); }
+.hero-card { display: flex; justify-content: space-between; align-items: flex-end; gap: 30px; padding: 34px; border-radius: 26px; }
+.hero-card h2 { margin: 8px 0 10px; font-size: 34px; max-width: 720px; letter-spacing: -0.045em; }
+.hero-card p { max-width: 760px; margin: 0; line-height: 1.7; color: #657087; }
+.eyebrow { color: #5060cc; font-weight: 800; font-size: 12px; letter-spacing: .13em; }
+.actions { display: flex; gap: 10px; flex-shrink: 0; }
+button { border: 0; border-radius: 12px; padding: 11px 16px; cursor: pointer; transition: transform .16s ease, opacity .16s ease, box-shadow .16s ease; }
+button:hover:not(:disabled) { transform: translateY(-1px); }
+button:disabled { opacity: .55; cursor: wait; }
+.primary { color: white; background: #5362d7; box-shadow: 0 9px 20px rgba(83, 98, 215, .23); }
+.danger { color: #a22634; background: #ffe6ea; }
+.secondary { color: #3e4a61; background: #edf1f7; }
+
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 18px 0; }
+.info-card { min-height: 150px; padding: 22px; border-radius: 20px; display: flex; flex-direction: column; }
+.info-card span { color: #7a859a; font-size: 13px; }
+.info-card strong { margin-top: 18px; font-size: 18px; line-height: 1.35; }
+.info-card small { margin-top: auto; color: #929caf; }
+.path-value { overflow-wrap: anywhere; font-size: 14px !important; }
+
+.settings-card { display: flex; justify-content: space-between; align-items: center; gap: 30px; padding: 28px; border-radius: 22px; }
+.settings-card h3 { margin: 7px 0 12px; font-size: 22px; }
+.settings-card code { display: inline-block; padding: 9px 11px; border-radius: 9px; color: #4350aa; background: #eef0ff; }
+.settings-card p { margin: 14px 0 0; color: #6e798e; }
+.message-bar { margin-top: 16px; padding: 13px 15px; border-radius: 12px; color: #526078; background: rgba(255,255,255,.66); }
+
+@media (prefers-color-scheme: dark) {
+  :root { color: #eef2ff; background: #11141b; }
+  body { background: radial-gradient(circle at top left, #23283a 0, #171b24 48%, #10131a 100%); }
+  .topbar p, .hero-card p, .settings-card p, .message-bar { color: #aab3c7; }
+  .hero-card, .settings-card, .info-card { background: rgba(30, 35, 47, .88); border-color: rgba(142, 155, 190, .13); }
+  .secondary { color: #dce2f2; background: #303747; }
+  .info-card span, .info-card small { color: #9da7bb; }
+  .settings-card code { color: #c6ccff; background: #2c3150; }
+  .message-bar { background: rgba(35, 40, 54, .7); }
+}
