@@ -1,4 +1,10 @@
-use std::{path::PathBuf, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
 
 use local_lens_core::{AppConfig, LibraryConfig};
 use serde::Serialize;
@@ -41,7 +47,12 @@ impl RuntimeState {
     }
 
     fn stop(&self) -> Result<(), String> {
-        if let Some(sender) = self.shutdown.lock().map_err(|_| "服务状态锁已损坏")?.take() {
+        if let Some(sender) = self
+            .shutdown
+            .lock()
+            .map_err(|_| "服务状态锁已损坏")?
+            .take()
+        {
             let _ = sender.send(());
         }
         self.running.store(false, Ordering::SeqCst);
@@ -101,6 +112,9 @@ fn ensure_default_config(config_path: &PathBuf, data_dir: PathBuf) -> anyhow::Re
         watch_files: true,
         thumbnail_workers: 2,
         metadata_workers: 2,
+        transcode_workers: 1,
+        transcode_cache_gb: 20,
+        transcode_hardware: "software".into(),
         pairing_ttl_minutes: 5,
         libraries: Vec::<LibraryConfig>::new(),
     };
@@ -133,7 +147,11 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![runtime_status, start_server, stop_server])
+        .invoke_handler(tauri::generate_handler![
+            runtime_status,
+            start_server,
+            stop_server
+        ])
         .run(tauri::generate_context!())
         .expect("启动 LocalLens Tauri 应用失败");
 }
