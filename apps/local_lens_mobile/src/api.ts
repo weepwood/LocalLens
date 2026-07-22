@@ -79,7 +79,7 @@ export class LocalLensApi {
     });
   }
 
-  private async request<T>(
+  async request<T>(
     path: string,
     options: {
       method?: string;
