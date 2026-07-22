@@ -30,6 +30,7 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "createUpdaterArtifacts": false,
-    "icon": []
+    "icon": [],
+    "resources": ["runtime/media-tools/*"]
   }
 }
