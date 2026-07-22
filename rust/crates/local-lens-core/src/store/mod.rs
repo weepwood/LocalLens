@@ -6,12 +6,15 @@ mod schema;
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     Row, SqlitePool,
 };
 
 use crate::{LibraryConfig, LibraryInfo, MediaStats};
+
+const RUST_MIGRATION_MARKER: &str = ".rust-backend-migration-v1";
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -23,6 +26,7 @@ impl Store {
         let data_dir = data_dir.as_ref();
         tokio::fs::create_dir_all(data_dir).await?;
         let path = data_dir.join("locallens.db");
+        backup_before_first_rust_migration(data_dir, &path).await?;
         let options = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true)
@@ -38,6 +42,11 @@ impl Store {
         let store = Self { pool };
         store.ensure_compatible_schema().await?;
         store.reset_running_jobs().await?;
+        tokio::fs::write(
+            data_dir.join(RUST_MIGRATION_MARKER),
+            Utc::now().to_rfc3339(),
+        )
+        .await?;
         Ok(store)
     }
 
@@ -141,4 +150,25 @@ FROM media_items WHERE missing=0"#,
             transcodes_pending,
         })
     }
+}
+
+async fn backup_before_first_rust_migration(data_dir: &Path, database: &Path) -> Result<()> {
+    if !database.is_file() || data_dir.join(RUST_MIGRATION_MARKER).is_file() {
+        return Ok(());
+    }
+    let backup_dir = data_dir.join("backups");
+    tokio::fs::create_dir_all(&backup_dir).await?;
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let base = backup_dir.join(format!("locallens-before-rust-{stamp}.db"));
+    tokio::fs::copy(database, &base)
+        .await
+        .with_context(|| format!("无法备份数据库到 {}", base.display()))?;
+    for suffix in ["-wal", "-shm"] {
+        let source = data_dir.join(format!("locallens.db{suffix}"));
+        if source.is_file() {
+            let target = backup_dir.join(format!("locallens-before-rust-{stamp}.db{suffix}"));
+            tokio::fs::copy(source, target).await?;
+        }
+    }
+    Ok(())
 }
