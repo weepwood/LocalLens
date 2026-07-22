@@ -37,6 +37,7 @@ export interface MediaItem {
   folderPath: string;
   fileName: string;
   type: MediaKind;
+  isVideo?: boolean;
   mimeType: string;
   sizeBytes: number;
   modifiedAt: string;
