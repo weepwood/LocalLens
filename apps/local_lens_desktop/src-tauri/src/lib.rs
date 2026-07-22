@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -121,6 +121,26 @@ fn ensure_default_config(config_path: &PathBuf, data_dir: PathBuf) -> anyhow::Re
     config.save(config_path)
 }
 
+fn install_bundled_media_tools(resource_dir: &Path, app_data: &Path) -> anyhow::Result<()> {
+    let target_dir = app_data.join("runtime").join("media-tools");
+    std::fs::create_dir_all(&target_dir)?;
+    for name in ["ffmpeg.exe", "ffprobe.exe", "FFMPEG-LICENSE.txt"] {
+        let target = target_dir.join(name);
+        if target.is_file() {
+            continue;
+        }
+        let candidates = [
+            resource_dir.join("runtime").join("media-tools").join(name),
+            resource_dir.join("media-tools").join(name),
+            resource_dir.join(name),
+        ];
+        if let Some(source) = candidates.iter().find(|candidate| candidate.is_file()) {
+            std::fs::copy(source, &target)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -130,7 +150,9 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
+            let resource_dir = app.path().resource_dir()?;
             std::fs::create_dir_all(&app_data)?;
+            install_bundled_media_tools(&resource_dir, &app_data)?;
             let config_path = app_data.join("config.json");
             ensure_default_config(&config_path, app_data.join("data"))?;
             let state = RuntimeState {
