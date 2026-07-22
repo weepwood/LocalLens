@@ -6,7 +6,6 @@
     "orientation": "default",
     "scheme": "locallens",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.weepwood.locallens.mobile",
