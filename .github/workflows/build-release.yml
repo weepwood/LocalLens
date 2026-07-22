@@ -105,7 +105,21 @@ jobs:
           applicable FFmpeg build license before redistributing LocalLens.
           "@ | Set-Content -Path (Join-Path $target "FFMPEG-LICENSE.txt") -Encoding UTF8
       - name: 构建 Tauri 安装包
-        run: npm run tauri -- build
+        shell: pwsh
+        run: |
+          & npm run tauri -- build *>&1 | Tee-Object -FilePath tauri-build.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
+      - name: 上传 Tauri 构建日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Tauri-Build-Log
+          path: apps/local_lens_desktop/tauri-build.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: 构建 Rust 独立服务
         shell: pwsh
         run: |
