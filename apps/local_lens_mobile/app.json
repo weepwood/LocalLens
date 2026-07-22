@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "LocalLens",
+    "slug": "local-lens-mobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "scheme": "locallens",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.weepwood.locallens.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "用于扫描 LocalLens Windows 管理端生成的一次性配对二维码。",
+        "NSLocalNetworkUsageDescription": "用于连接同一局域网内的 LocalLens 媒体服务器。"
+      }
+    },
+    "android": {
+      "package": "com.weepwood.locallens.mobile",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-secure-store",
+      [
+        "expo-video",
+        {
+          "supportsPictureInPicture": true
+        }
+      ]
+    ]
+  }
+}
