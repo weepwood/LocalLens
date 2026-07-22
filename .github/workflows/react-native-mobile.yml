@@ -49,10 +49,42 @@ jobs:
         run: npx expo install --check
 
       - name: Run Expo Doctor
-        run: npx expo-doctor
+        shell: bash
+        run: |
+          set +e
+          npx expo-doctor --verbose > expo-doctor.log 2>&1
+          status=$?
+          cat expo-doctor.log
+          echo "$status" > expo-doctor.status
+          exit 0
+
+      - name: Upload Expo Doctor report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Expo-Doctor
+          path: |
+            apps/local_lens_mobile/expo-doctor.log
+            apps/local_lens_mobile/expo-doctor.status
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Type check
         run: npm run typecheck
+
+      - name: Enforce Expo Doctor result
+        if: always()
+        shell: bash
+        run: |
+          if [[ ! -f expo-doctor.status ]]; then
+            echo "Expo Doctor status file is missing" >&2
+            exit 1
+          fi
+          status="$(cat expo-doctor.status)"
+          if [[ "$status" != "0" ]]; then
+            echo "Expo Doctor reported project issues; see LocalLens-Expo-Doctor artifact." >&2
+            exit "$status"
+          fi
 
   android:
     name: React Native Android APK
