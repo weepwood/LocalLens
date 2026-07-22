@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.6.0"
+        description: "发布标签，例如 v0.7.0"
         required: true
-        default: "v0.6.0"
+        default: "v0.7.0"
         type: string
 
 permissions:
@@ -23,299 +23,153 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  FLUTTER_VERSION: "3.41.9"
+  NODE_VERSION: "22"
+  JAVA_VERSION: "17"
+  GRADLE_VERSION: "8.13"
+  FFMPEG_URL: "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 jobs:
-  server-windows:
-    name: Go server · Windows x64
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: server
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: server/go.mod
-          cache-dependency-path: |
-            server/go.mod
-            server/go.sum
-
-      - name: Resolve and download dependencies
-        run: |
-          go mod tidy
-          go mod download
-
-      - name: Test server
-        run: go test ./...
-
-      - name: Build standalone and embedded servers
-        shell: pwsh
-        env:
-          MANUAL_TAG: ${{ inputs.release_tag }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $packageName = "LocalLens-Server-Windows-x64"
-          $packageDir = Join-Path $PWD "dist/$packageName"
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-
-          $version = "0.6.0-dev"
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
-            $version = $env:MANUAL_TAG.TrimStart("v")
-          }
-
-          go build -trimpath `
-            -ldflags "-s -w -X main.version=$version" `
-            -o (Join-Path $packageDir "LocalLensServer.exe") .
-
-          go build -trimpath `
-            -ldflags "-H=windowsgui -s -w -X main.version=$version" `
-            -o (Join-Path $packageDir "LocalLensServerEmbedded.exe") .
-
-          Copy-Item "config.example.json" (Join-Path $packageDir "config.example.json")
-          New-Item -ItemType Directory -Force -Path (Join-Path $packageDir "bin") | Out-Null
-
-          @"
-          LocalLens Server $version
-          ==========================
-
-          Standalone mode:
-          1. Copy config.example.json to config.json.
-          2. Edit media library paths, public_url and api_token.
-          3. Put ffmpeg.exe and ffprobe.exe in .\bin\ when video transcoding is needed.
-          4. Start LocalLensServer.exe -config .\config.json.
-
-          LocalLensServerEmbedded.exe is the no-console runtime used by the unified
-          Windows client. Most users should install the LocalLens Windows client
-          instead of starting this file manually.
-
-          v0.6.0 adds the Windows unified host, automatic local configuration,
-          embedded server lifecycle management and visual server settings.
-          Existing databases and server configuration remain compatible.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
-
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
-
-      - name: Upload server artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: LocalLens-Server-Windows-x64
-          path: server/dist/LocalLens-Server-Windows-x64.zip
-          if-no-files-found: error
-          retention-days: 30
-
-  flutter-windows:
-    name: Flutter client · Windows x64
-    needs: server-windows
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: apps/local_lens
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Download embedded server artifact
-        uses: actions/download-artifact@v5
-        with:
-          name: LocalLens-Server-Windows-x64
-          path: ${{ runner.temp }}/local-lens-server
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Generate Windows platform project
-        shell: pwsh
-        run: |
-          flutter create `
-            --project-name local_lens `
-            --org com.weepwood `
-            --platforms windows `
-            .
-          flutter pub get
-
-      - name: Test Flutter client
-        run: flutter test
-
-      - name: Analyze Flutter client
-        run: flutter analyze
-
-      - name: Build Windows client
-        shell: pwsh
-        env:
-          MANUAL_TAG: ${{ inputs.release_tag }}
-        run: |
-          $version = "0.6.0"
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $env:MANUAL_TAG) {
-            $version = $env:MANUAL_TAG.TrimStart("v")
-          }
-          flutter build windows --release --build-name $version --build-number $env:GITHUB_RUN_NUMBER
-
-      - name: Package unified Windows application
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $packageName = "LocalLens-Client-Windows-x64"
-          $packageDir = Join-Path $PWD "dist/$packageName"
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          Copy-Item "build/windows/x64/runner/Release/*" $packageDir -Recurse -Force
-
-          $serverArtifactDir = Join-Path $env:RUNNER_TEMP "local-lens-server"
-          $serverZip = Get-ChildItem $serverArtifactDir -Filter "*.zip" -Recurse | Select-Object -First 1
-          if (-not $serverZip) {
-            throw "Embedded server artifact zip was not found"
-          }
-          $serverExtractDir = Join-Path $env:RUNNER_TEMP "local-lens-server-extracted"
-          Expand-Archive -Path $serverZip.FullName -DestinationPath $serverExtractDir -Force
-          $embeddedServer = Get-ChildItem $serverExtractDir -Filter "LocalLensServerEmbedded.exe" -Recurse | Select-Object -First 1
-          if (-not $embeddedServer) {
-            throw "LocalLensServerEmbedded.exe was not found in server artifact"
-          }
-
-          $runtimeDir = Join-Path $packageDir "runtime"
-          $mediaToolsDir = Join-Path $runtimeDir "media-tools"
-          New-Item -ItemType Directory -Force -Path $mediaToolsDir | Out-Null
-          Copy-Item $embeddedServer.FullName (Join-Path $runtimeDir "LocalLensServer.exe") -Force
-
-          @"
-          Optional media tools
-          ====================
-
-          Put ffmpeg.exe and ffprobe.exe in this directory to enable video
-          thumbnails, broad metadata compatibility and HLS transcoding.
-          The LocalLens client detects these files when it creates local config.
-          "@ | Set-Content -Path (Join-Path $mediaToolsDir "README.txt") -Encoding UTF8
-
-          @"
-          LocalLens Windows ${{ github.run_number }}
-          =========================================
-
-          Launch LocalLens.exe only. The application automatically creates a local
-          configuration, starts the embedded server without a console window and
-          connects through 127.0.0.1. Server data is stored under
-          %LOCALAPPDATA%\LocalLens rather than this installation directory.
-          "@ | Set-Content -Path (Join-Path $packageDir "START-HERE.txt") -Encoding UTF8
-
-          if (-not (Test-Path (Join-Path $runtimeDir "LocalLensServer.exe"))) {
-            throw "Unified Windows package is missing runtime/LocalLensServer.exe"
-          }
-          Compress-Archive -Path $packageDir -DestinationPath "dist/$packageName.zip" -Force
-
-      - name: Upload Windows client artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: LocalLens-Client-Windows-x64
-          path: apps/local_lens/dist/LocalLens-Client-Windows-x64.zip
-          if-no-files-found: error
-          retention-days: 30
-
-  flutter-android:
-    name: Flutter client · Android APK
+  rust-tests:
+    name: Rust 后端测试
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/local_lens
-
+        working-directory: rust
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v7
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: 缓存 Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: 格式化 Rust
+        run: cargo fmt --all
+      - name: 执行 Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: 执行后端回归测试
+        run: cargo test --workspace
 
-      - name: Set up Java
+  tauri-windows:
+    name: Tauri 2 Windows 安装包
+    needs: rust-tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_desktop
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 配置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/local_lens_desktop/package.json
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: 缓存 Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            apps/local_lens_desktop/src-tauri
+      - name: 安装前端依赖
+        run: npm install --no-audit --no-fund
+      - name: 下载并准备 FFmpeg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          $ffmpeg = Get-ChildItem $extract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          $ffprobe = Get-ChildItem $extract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) {
+            throw "FFmpeg 压缩包中缺少 ffmpeg.exe 或 ffprobe.exe"
+          }
+          $target = Join-Path $PWD "src-tauri/runtime/media-tools"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item $ffmpeg.FullName (Join-Path $target "ffmpeg.exe") -Force
+          Copy-Item $ffprobe.FullName (Join-Path $target "ffprobe.exe") -Force
+          @"
+          FFmpeg third-party notice
+          =========================
+          Windows binaries: https://www.gyan.dev/ffmpeg/builds/
+          FFmpeg source and licensing: https://ffmpeg.org/
+          The bundled executable is a separate third-party program. Review the
+          applicable FFmpeg build license before redistributing LocalLens.
+          "@ | Set-Content -Path (Join-Path $target "FFMPEG-LICENSE.txt") -Encoding UTF8
+      - name: 构建 Tauri 安装包
+        run: npm run tauri -- build
+      - name: 构建 Rust 独立服务
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path ../../rust/Cargo.toml -p local-lens-server --bin local-lens-server
+          $dist = Join-Path $PWD "dist/LocalLens-Rust-Server-Windows-x64"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "../../rust/target/release/local-lens-server.exe" (Join-Path $dist "LocalLensServer.exe")
+          Copy-Item "../../server/config.example.json" (Join-Path $dist "config.example.json")
+          Copy-Item "src-tauri/runtime/media-tools/*" $dist -Force
+          Compress-Archive -Path $dist -DestinationPath "dist/LocalLens-Rust-Server-Windows-x64.zip" -Force
+      - name: 汇总 Windows 产物
+        shell: pwsh
+        run: |
+          $output = Join-Path $PWD "dist/windows"
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          Get-ChildItem "src-tauri/target/release/bundle" -Include "*.msi","*.exe" -Recurse |
+            Copy-Item -Destination $output -Force
+          Copy-Item "dist/LocalLens-Rust-Server-Windows-x64.zip" $output -Force
+          if (-not (Get-ChildItem $output -File)) { throw "没有生成 Windows 产物" }
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Tauri-Windows-x64
+          path: apps/local_lens_desktop/dist/windows/*
+          if-no-files-found: error
+          retention-days: 30
+
+  android-native:
+    name: Kotlin 原生 Android APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_android
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 配置 Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+          java-version: ${{ env.JAVA_VERSION }}
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v5
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Generate Android platform project
-        shell: bash
+          gradle-version: ${{ env.GRADLE_VERSION }}
+      - name: 构建原生 Android APK
+        run: gradle :app:assembleDebug --stacktrace
+      - name: 整理 Android 产物
         run: |
-          set -euo pipefail
-          flutter create \
-            --project-name local_lens \
-            --org com.weepwood \
-            --platforms android \
-            .
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
-          text = manifest.read_text(encoding="utf-8")
-          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-          permissions = [
-              '<uses-permission android:name="android.permission.INTERNET" />',
-              '<uses-permission android:name="android.permission.CAMERA" />',
-          ]
-          for permission in permissions:
-              if permission not in text:
-                  text = text.replace(marker, marker + "\n    " + permission, 1)
-          if 'android:usesCleartextTraffic="true"' not in text:
-              text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-          manifest.write_text(text, encoding="utf-8")
-          PY
-
-          flutter pub get
-
-      - name: Test Flutter client
-        run: flutter test
-
-      - name: Analyze Flutter client
-        run: flutter analyze
-
-      - name: Build Android APK
-        shell: bash
-        env:
-          MANUAL_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          VERSION="0.6.0"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${MANUAL_TAG}" ]]; then
-            VERSION="${MANUAL_TAG#v}"
-          fi
-
-          flutter build apk \
-            --release \
-            --build-name "$VERSION" \
-            --build-number "${GITHUB_RUN_NUMBER}"
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/LocalLens-Android-universal.apk
-
-      - name: Upload Android artifact
+          cp app/build/outputs/apk/debug/app-debug.apk dist/LocalLens-Native-Android.apk
+      - name: 上传 Android 产物
         uses: actions/upload-artifact@v7
         with:
-          name: LocalLens-Android-universal
-          path: apps/local_lens/dist/LocalLens-Android-universal.apk
+          name: LocalLens-Native-Android
+          path: apps/local_lens_android/dist/LocalLens-Native-Android.apk
           if-no-files-found: error
           retention-days: 30
 
   release:
-    name: Publish GitHub Release
+    name: 发布 GitHub Release
     needs:
-      - server-windows
-      - flutter-windows
-      - flutter-android
+      - tauri-windows
+      - android-native
     runs-on: ubuntu-latest
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
@@ -325,67 +179,40 @@ jobs:
        startsWith(github.event.head_commit.message, 'release:'))
     permissions:
       contents: write
-
     steps:
-      - name: Download build artifacts
+      - name: 下载构建产物
         uses: actions/download-artifact@v5
         with:
           pattern: LocalLens-*
           path: dist
           merge-multiple: true
-
-      - name: Generate SHA-256 checksums
-        shell: bash
+      - name: 生成 SHA-256 校验文件
         run: |
-          set -euo pipefail
           cd dist
-          sha256sum LocalLens-* > SHA256SUMS.txt
+          find . -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
-
-      - name: Resolve release tag
+      - name: 确定发布标签
         id: release_tag
-        shell: bash
         env:
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
-          set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             TAG="${GITHUB_REF_NAME}"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             TAG="${MANUAL_TAG}"
           else
-            TAG="v0.6.0"
+            TAG="v0.7.0"
           fi
-
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $TAG" >&2
+            echo "无效标签：$TAG" >&2
             exit 1
           fi
-
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release_tag.outputs.tag }}
-        run: |
-          set -euo pipefail
-
-          PRERELEASE_ARGS=()
-          if [[ "$TAG" == *-* ]]; then
-            PRERELEASE_ARGS+=(--prerelease)
-          fi
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-          else
-            gh release create "$TAG" dist/* \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "LocalLens $TAG" \
-              --generate-notes \
-              "${PRERELEASE_ARGS[@]}"
-          fi
+      - name: 创建或更新 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: LocalLens ${{ steps.release_tag.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/*
