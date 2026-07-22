@@ -11,17 +11,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "expo": "~57.0.1",
-    "expo-camera": "~57.0.0",
-    "expo-image": "~57.0.0",
-    "expo-secure-store": "~57.0.0",
+    "expo": "~57.0.7",
+    "expo-camera": "~57.0.3",
+    "expo-image": "~57.0.1",
+    "expo-secure-store": "~57.0.1",
     "expo-status-bar": "~57.0.1",
-    "expo-video": "~57.0.0",
+    "expo-video": "~57.0.1",
     "react": "19.2.3",
     "react-native": "0.86.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.0",
-    "typescript": "^5.9.0"
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
   }
 }
