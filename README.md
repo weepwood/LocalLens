@@ -1,6 +1,6 @@
 # LocalLens
 
-LocalLens 是一个本地优先的跨平台媒体库：Windows 上运行 Go 媒体服务，Flutter Windows / Android 客户端通过局域网浏览、播放和管理图片与视频。
+LocalLens 是一个本地优先的跨平台媒体库：Windows 上运行 Go 媒体服务和 Flutter 管理端，Android / iOS 移动端使用 React Native，通过局域网浏览、播放和管理图片与视频。
 
 > 当前版本：`v0.2.0`。原始媒体始终保存在用户选择的 Windows 文件夹中，LocalLens 只维护 SQLite 索引、缩略图、元数据和虚拟分类。
 
@@ -24,16 +24,25 @@ LocalLens 是一个本地优先的跨平台媒体库：Windows 上运行 Go 媒�
 - 一次性二维码配对、独立设备 Token 和设备撤销；
 - Token 只以 SHA-256 哈希保存在 SQLite 中。
 
-### Flutter 客户端
+### Flutter Windows 管理端
 
-- 拍摄时间线：按 EXIF / 容器时间分组；
-- 物理目录：显示与服务端媒体文件夹一致的相对目录树；
-- 集合管理：相册、标签、收藏和 0～5 星评分；
-- Windows 与手机跨设备续播；
-- 手机扫码领取独立设备令牌；
-- Windows 管理端生成二维码、查看任务、扫描媒体库和撤销设备；
-- 游标分页、搜索、图片/视频筛选和最低评分筛选；
-- 缩略图未完成时自动重试，不下载原图填充网格。
+- 管理本机内嵌 Go 服务端的启动、停止与配置；
+- 生成一次性配对二维码、查看后台任务和撤销设备；
+- 拍摄时间线、物理目录、相册、标签、收藏和评分；
+- 搜索、筛选、图片查看、视频播放与播放进度管理；
+- 与移动设备共享同一套 Go REST API 和媒体索引。
+
+### React Native 移动端
+
+- Expo + React Native + TypeScript，Android 与 iOS 共享业务代码；
+- 扫描 Windows 管理端生成的一次性二维码并领取独立设备 Token；
+- 手动填写局域网服务地址和管理员或设备 Token；
+- Token 使用 Android Keystore / iOS Keychain 对应的 SecureStore 保存；
+- 媒体网格、游标分页、下拉刷新和响应式手机/平板列数；
+- 文件名与相对路径搜索，以及全部、图片、视频、收藏筛选；
+- 原图查看、带 Bearer Header 的视频流播放；
+- 收藏和取消收藏；
+- 跟随系统的浅色与深色主题。
 
 ## 架构
 
@@ -50,7 +59,8 @@ Go LocalLens Server
 ├── HTTP Range 视频流
 └── 配对与设备令牌
         ↓ 局域网
-Flutter Windows / Android / iOS
+├── Flutter Windows 管理端
+└── React Native Android / iOS 移动端
 ```
 
 ## 仓库结构
@@ -69,7 +79,8 @@ LocalLens/
 │   ├── pairing.go           # 配对与设备 Token
 │   ├── http_api.go          # REST API 与媒体流
 │   └── util.go
-├── apps/local_lens/         # Flutter 客户端
+├── apps/local_lens/         # Flutter Windows 管理端
+├── apps/local_lens_mobile/  # React Native Android / iOS 移动端
 └── docs/
 ```
 
@@ -79,7 +90,7 @@ GitHub Release 包含：
 
 - `LocalLens-Server-Windows-x64.zip`
 - `LocalLens-Client-Windows-x64.zip`
-- `LocalLens-Android-universal.apk`
+- `LocalLens-Android-universal.apk`（React Native）
 - `SHA256SUMS.txt`
 
 从 [GitHub Releases](https://github.com/weepwood/LocalLens/releases) 下载正式版本。
@@ -179,14 +190,16 @@ New-NetFirewallRule `
 - 查看后台任务；
 - 查看并撤销设备。
 
-### Android 手机
+### Android / iOS 手机
 
 1. Windows 客户端进入“服务器与设备”；
 2. 点击“生成二维码”；
-3. 手机首次启动点击“扫描二维码配对”；
+3. React Native 移动端首次启动后点击“扫描二维码配对”；
 4. 服务端签发只属于该手机的设备 Token。
 
 设备 Token 可以浏览和管理媒体，但不能创建新配对码、启动全量扫描或撤销其他设备。
+
+移动端也可以手动填写手机可访问的局域网地址，例如 `http://192.168.1.20:9527`。不要填写 `localhost` 或 `127.0.0.1`，它们在手机上指向手机自身。
 
 ## 数据库升级
 
@@ -210,6 +223,7 @@ New-NetFirewallRule `
 
 ## 当前限制
 
+- React Native 移动端首版尚未迁移相册、标签、星级评分、文件夹树和跨端视频续播；
 - 视频默认直接播放原编码，尚未提供 HLS 自动转码；
 - HEIC、RAW 等格式的缩略图取决于 FFmpeg 构建能力；
 - 当前局域网开发模式仍使用 HTTP，尚未加入内置 TLS 证书指纹固定；
@@ -217,4 +231,4 @@ New-NetFirewallRule `
 - iOS 业务代码可复用，但 GitHub Actions 暂未生成 iOS 安装包；
 - Windows Service 和托盘常驻管理器仍在后续计划中。
 
-详见 [API 文档](docs/api.md)、[架构文档](docs/architecture.md) 和 [发布说明](docs/releasing.md)。
+详见 [移动端说明](apps/local_lens_mobile/README.md)、[API 文档](docs/api.md)、[架构文档](docs/architecture.md) 和 [发布说明](docs/releasing.md)。
