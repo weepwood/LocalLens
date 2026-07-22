@@ -1,0 +1,109 @@
+name: Native Rust Migration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "apps/local_lens_desktop/**"
+      - "apps/local_lens_android/**"
+      - "docs/native-rust-migration.md"
+      - ".github/workflows/native-rust-migration.yml"
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "apps/local_lens_desktop/**"
+      - "apps/local_lens_android/**"
+      - ".github/workflows/native-rust-migration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-lens-native-rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: Rust core and API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+  tauri-windows:
+    name: Tauri 2 desktop · Windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/local_lens_desktop/package.json
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/local_lens_desktop/src-tauri
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build React frontend
+        run: npm run build
+      - name: Check Tauri Rust host
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  android-native:
+    name: Kotlin Android native APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.13"
+      - name: Build native Android debug APK
+        run: gradle :app:assembleDebug --stacktrace
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Native-Android-debug
+          path: apps/local_lens_android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
