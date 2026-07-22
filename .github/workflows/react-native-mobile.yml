@@ -1,0 +1,108 @@
+name: React Native Mobile
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/local_lens_mobile/**"
+      - ".github/workflows/react-native-mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/local_lens_mobile/**"
+      - ".github/workflows/react-native-mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-lens-react-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.13.1"
+
+jobs:
+  typecheck:
+    name: TypeScript and Expo checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/local_lens_mobile/package.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check Expo dependencies
+        run: npx expo install --check
+
+      - name: Run Expo Doctor
+        run: npx expo-doctor
+
+      - name: Type check
+        run: npm run typecheck
+
+  android:
+    name: React Native Android APK
+    needs: typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/local_lens_mobile/package.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Android project
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Build release APK
+        working-directory: apps/local_lens_mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleRelease --no-daemon
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            dist/LocalLens-ReactNative-Android-universal.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-ReactNative-Android-universal
+          path: apps/local_lens_mobile/dist/LocalLens-ReactNative-Android-universal.apk
+          if-no-files-found: error
+          retention-days: 30
