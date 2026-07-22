@@ -34,3 +34,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 urlencoding = "2"
 walkdir = "2"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
