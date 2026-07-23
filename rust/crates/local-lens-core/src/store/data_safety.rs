@@ -90,10 +90,15 @@ impl Store {
         self.verify_database_integrity().await?;
         let backups_dir = self.data_dir.join("backups");
         tokio::fs::create_dir_all(&backups_dir).await?;
+        let suffix = uuid::Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(8)
+            .collect::<String>();
         let id = format!(
-            "backup-{}-{}",
-            Utc::now().format("%Y%m%d-%H%M%S"),
-            uuid::Uuid::new_v4().simple().to_string().chars().take(8).collect::<String>()
+            "backup-{}-{suffix}",
+            Utc::now().format("%Y%m%d-%H%M%S")
         );
         let snapshot_dir = backups_dir.join(&id);
         tokio::fs::create_dir_all(&snapshot_dir).await?;
