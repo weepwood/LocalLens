@@ -1,4 +1,5 @@
 use std::{
+    net::{IpAddr, Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,7 +10,10 @@ use std::{
 use local_lens_core::{AppConfig, LibraryConfig};
 use serde::Serialize;
 use tauri::{Manager, State};
-use tokio::{sync::oneshot, time::{sleep, Duration}};
+use tokio::{
+    sync::oneshot,
+    time::{sleep, Duration},
+};
 
 #[derive(Clone)]
 struct RuntimeState {
@@ -47,7 +51,12 @@ impl RuntimeState {
     }
 
     fn stop(&self) -> Result<(), String> {
-        if let Some(sender) = self.shutdown.lock().map_err(|_| "服务状态锁已损坏")?.take() {
+        if let Some(sender) = self
+            .shutdown
+            .lock()
+            .map_err(|_| "服务状态锁已损坏")?
+            .take()
+        {
             let _ = sender.send(());
         }
         self.running.store(false, Ordering::SeqCst);
@@ -97,6 +106,12 @@ fn read_config(state: State<'_, RuntimeState>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+fn suggest_public_url(state: State<'_, RuntimeState>) -> Result<String, String> {
+    let config = AppConfig::load(&state.config_path).map_err(|error| error.to_string())?;
+    Ok(detect_public_url(&config.listen_address))
+}
+
+#[tauri::command]
 async fn save_config(
     state: State<'_, RuntimeState>,
     mut config: AppConfig,
@@ -115,13 +130,32 @@ async fn save_config(
     runtime.start().await
 }
 
+fn detect_public_url(listen_address: &str) -> String {
+    let port = listen_address
+        .rsplit_once(':')
+        .and_then(|(_, value)| value.parse::<u16>().ok())
+        .unwrap_or(9527);
+    let address = detect_lan_ipv4().unwrap_or(Ipv4Addr::LOCALHOST);
+    format!("http://{address}:{port}")
+}
+
+fn detect_lan_ipv4() -> Option<Ipv4Addr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(address) if !address.is_loopback() && !address.is_unspecified() => Some(address),
+        _ => None,
+    }
+}
+
 fn ensure_default_config(config_path: &PathBuf, data_dir: PathBuf) -> anyhow::Result<()> {
     if config_path.is_file() {
         return Ok(());
     }
+    let listen_address = "0.0.0.0:9527".to_string();
     let config = AppConfig {
-        listen_address: "0.0.0.0:9527".into(),
-        public_url: "http://127.0.0.1:9527".into(),
+        public_url: detect_public_url(&listen_address),
+        listen_address,
         server_name: "LocalLens".into(),
         data_dir,
         api_token: uuid::Uuid::new_v4().simple().to_string(),
@@ -191,6 +225,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             runtime_status,
             read_config,
+            suggest_public_url,
             save_config,
             start_server,
             stop_server
