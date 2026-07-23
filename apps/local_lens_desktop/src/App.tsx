@@ -210,6 +210,20 @@ export default function App() {
     }
   };
 
+  const detectPublicUrl = async () => {
+    setBusy(true);
+    setMessage('正在检测 Windows 局域网地址…');
+    try {
+      const value = await invoke<string>('suggest_public_url');
+      setConfig((current) => ({ ...current, public_url: value }));
+      setMessage(`已检测到局域网公开地址：${value}，保存后生效`);
+    } catch (error) {
+      setMessage(`自动检测公开地址失败：${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createPairing = async () => {
     setPairingBusy(true);
     setMessage('正在创建一次性配对二维码…');
@@ -384,7 +398,7 @@ export default function App() {
         <div className="form-grid">
           <label>服务名称<input value={config.server_name} onChange={(event) => update('server_name', event.target.value)} /></label>
           <label>监听地址<input value={config.listen_address} onChange={(event) => update('listen_address', event.target.value)} /></label>
-          <label className="wide">公开地址<input value={config.public_url} onChange={(event) => update('public_url', event.target.value)} placeholder="http://192.168.1.20:9527" /><small>必须填写手机能够访问的 Windows 局域网地址。</small></label>
+          <label className="wide token-field">公开地址<div><input value={config.public_url} onChange={(event) => update('public_url', event.target.value)} placeholder="http://192.168.1.20:9527" /><button className="secondary" type="button" disabled={busy} onClick={() => void detectPublicUrl()}>自动检测</button></div><small>必须填写手机能够访问的 Windows 局域网地址。</small></label>
           <label className="wide">数据目录<input value={config.data_dir} onChange={(event) => update('data_dir', event.target.value)} /></label>
           <label>缩略图 Worker<input type="number" min="1" max="8" value={config.thumbnail_workers} onChange={(event) => update('thumbnail_workers', Number(event.target.value))} /></label>
           <label>元数据 Worker<input type="number" min="1" max="8" value={config.metadata_workers} onChange={(event) => update('metadata_workers', Number(event.target.value))} /></label>
