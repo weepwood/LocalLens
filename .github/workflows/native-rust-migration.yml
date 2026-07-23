@@ -30,7 +30,7 @@ jobs:
     name: Rust core and API
     runs-on: ubuntu-latest
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/local-lens-target
+      CARGO_TARGET_DIR: /tmp/local-lens-target
     defaults:
       run:
         working-directory: rust
