@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import MediaBrowser from './MediaBrowser';
 
 interface RuntimeStatus {
   running: boolean;
@@ -55,6 +56,8 @@ interface Device {
   revokedAt?: string | null;
 }
 
+type BinaryPayload = ArrayBuffer | Uint8Array | number[];
+
 const emptyStatus: RuntimeStatus = {
   running: false,
   serverName: 'LocalLens',
@@ -84,26 +87,23 @@ const emptyConfig: AppConfig = {
   libraries: [],
 };
 
-function localApiBase(listenAddress: string) {
-  const lastColon = listenAddress.lastIndexOf(':');
-  const port = lastColon >= 0 ? listenAddress.slice(lastColon + 1) : '9527';
-  return `http://127.0.0.1:${port || '9527'}`;
+function binaryBuffer(payload: BinaryPayload): ArrayBuffer {
+  const source = payload instanceof ArrayBuffer
+    ? new Uint8Array(payload)
+    : payload instanceof Uint8Array
+      ? payload
+      : new Uint8Array(payload);
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy.buffer;
 }
 
-async function apiError(response: Response) {
-  try {
-    const body = await response.json() as { error?: string };
-    return body.error || `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
-}
-
-async function blobToDataUrl(blob: Blob) {
+async function binaryToDataUrl(payload: BinaryPayload, mimeType: string) {
+  const blob = new Blob([binaryBuffer(payload)], { type: mimeType });
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error('读取二维码失败'));
+    reader.onerror = () => reject(reader.error ?? new Error('读取二进制内容失败'));
     reader.readAsDataURL(blob);
   });
 }
@@ -119,13 +119,13 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [busy, setBusy] = useState(false);
   const [pairingBusy, setPairingBusy] = useState(false);
-  const [message, setMessage] = useState('正在读取本地服务状态…');
+  const [message, setMessage] = useState('正在初始化本地 Rust 服务…');
   const [pairing, setPairing] = useState<PairingSession | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [devices, setDevices] = useState<Device[]>([]);
   const [now, setNow] = useState(Date.now());
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const apiBase = useMemo(() => localApiBase(status.listenAddress), [status.listenAddress]);
   const remainingSeconds = pairing
     ? Math.max(0, Math.ceil((new Date(pairing.expiresAt).getTime() - now) / 1000))
     : 0;
@@ -138,36 +138,46 @@ export default function App() {
       ]);
       setStatus(nextStatus);
       setConfig(nextConfig);
-      setMessage(nextStatus.running ? 'Rust 媒体服务正在运行' : 'Rust 媒体服务已停止');
+      setMessage(nextStatus.running ? 'Rust 媒体服务正在运行' : 'Rust 媒体服务尚未启动');
+      return nextStatus;
     } catch (error) {
       setMessage(`读取状态失败：${String(error)}`);
+      return null;
     }
   }, []);
 
   const loadDevices = useCallback(async () => {
-    if (!status.running || !config.api_token) {
+    if (!status.running) {
       setDevices([]);
       return;
     }
     try {
-      const response = await fetch(`${apiBase}/api/v1/devices`, {
-        headers: { Authorization: `Bearer ${config.api_token}` },
-      });
-      if (!response.ok) throw new Error(await apiError(response));
-      const body = await response.json() as { items: Device[] };
-      setDevices(body.items ?? []);
+      setDevices(await invoke<Device[]>('desktop_devices'));
     } catch (error) {
       setMessage(`读取设备失败：${String(error)}`);
     }
-  }, [apiBase, config.api_token, status.running]);
+  }, [status.running]);
 
   useEffect(() => {
-    void refresh();
+    let active = true;
+    let timer = 0;
+    let attempts = 0;
+    const poll = async () => {
+      const next = await refresh();
+      if (!active || next?.running || attempts >= 30) return;
+      attempts += 1;
+      timer = window.setTimeout(() => void poll(), 500);
+    };
+    void poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [refresh]);
 
   useEffect(() => {
     void loadDevices();
-  }, [loadDevices]);
+  }, [loadDevices, refreshKey]);
 
   useEffect(() => {
     if (!pairing) return undefined;
@@ -182,6 +192,7 @@ export default function App() {
     try {
       await invoke(action);
       await refresh();
+      setRefreshKey((value) => value + 1);
       if (action === 'stop_server') {
         setPairing(null);
         setQrDataUrl('');
@@ -202,7 +213,8 @@ export default function App() {
       setPairing(null);
       setQrDataUrl('');
       await refresh();
-      setMessage('配置已保存，Rust 服务已重新启动');
+      setRefreshKey((value) => value + 1);
+      setMessage('配置已保存，Rust 服务已完成重启');
     } catch (error) {
       setMessage(`保存配置失败：${String(error)}`);
     } finally {
@@ -228,18 +240,10 @@ export default function App() {
     setPairingBusy(true);
     setMessage('正在创建一次性配对二维码…');
     try {
-      const response = await fetch(`${apiBase}/api/v1/pairing/session`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${config.api_token}` },
-      });
-      if (!response.ok) throw new Error(await apiError(response));
-      const session = await response.json() as PairingSession;
-      const qrResponse = await fetch(`${apiBase}${session.qrUrl}`, {
-        headers: { Authorization: `Bearer ${config.api_token}` },
-      });
-      if (!qrResponse.ok) throw new Error(await apiError(qrResponse));
+      const session = await invoke<PairingSession>('desktop_create_pairing');
+      const payload = await invoke<BinaryPayload>('desktop_pairing_qr', { sessionId: session.id });
       setPairing(session);
-      setQrDataUrl(await blobToDataUrl(await qrResponse.blob()));
+      setQrDataUrl(await binaryToDataUrl(payload, 'image/png'));
       setNow(Date.now());
       setMessage('二维码已生成，请使用 Android 客户端扫描');
     } catch (error) {
@@ -255,11 +259,7 @@ export default function App() {
     if (!window.confirm(`确定撤销设备“${device.name}”吗？撤销后该设备需要重新配对。`)) return;
     setPairingBusy(true);
     try {
-      const response = await fetch(`${apiBase}/api/v1/devices/${encodeURIComponent(device.id)}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${config.api_token}` },
-      });
-      if (!response.ok) throw new Error(await apiError(response));
+      await invoke('desktop_revoke_device', { id: device.id });
       await loadDevices();
       setMessage(`设备“${device.name}”已撤销`);
     } catch (error) {
@@ -315,7 +315,7 @@ export default function App() {
         <div className="brand-mark">L</div>
         <div>
           <h1>LocalLens</h1>
-          <p>Rust 本地媒体服务与桌面管理程序</p>
+          <p>Rust 本地媒体服务与 Windows 媒体管理程序</p>
         </div>
         <span className={`status-pill ${status.running ? 'online' : 'offline'}`}>
           <span className="status-dot" />
@@ -326,8 +326,8 @@ export default function App() {
       <section className="hero-card">
         <div>
           <span className="eyebrow">TAURI 2 · RUST</span>
-          <h2>本地优先的媒体库控制中心</h2>
-          <p>桌面应用直接嵌入 Rust 服务。Android 原生客户端通过局域网 API 扫码配对、浏览图片并播放视频。</p>
+          <h2>在 Windows 中管理、浏览和配对本地媒体库</h2>
+          <p>桌面端直接访问内嵌 Rust 状态，不再通过 WebView 回环请求自身服务。Android 原生客户端继续通过局域网 API 扫码连接。</p>
         </div>
         <div className="actions">
           {status.running ? (
@@ -335,7 +335,7 @@ export default function App() {
           ) : (
             <button className="primary" disabled={busy} onClick={() => void changeRuntime('start_server')}>启动服务</button>
           )}
-          <button className="secondary" disabled={busy} onClick={() => void refresh()}>刷新状态</button>
+          <button className="secondary" disabled={busy} onClick={() => { void refresh(); setRefreshKey((value) => value + 1); }}>刷新状态</button>
         </div>
       </section>
 
@@ -346,12 +346,14 @@ export default function App() {
         <article className="info-card"><span>数据目录</span><strong className="path-value">{status.dataDir || '尚未初始化'}</strong><small>兼容原有 locallens.db</small></article>
       </section>
 
+      <MediaBrowser running={status.running} refreshKey={refreshKey} onMessage={setMessage} />
+
       <section className="config-panel">
         <div className="section-heading">
           <div><span className="eyebrow">移动端连接</span><h3>二维码配对与设备</h3></div>
           <div className="actions">
             <button className="secondary" disabled={!status.running || pairingBusy} onClick={() => void loadDevices()}>刷新设备</button>
-            <button className="primary" disabled={!status.running || !config.api_token || pairingBusy} onClick={() => void createPairing()}>{pairing ? '重新生成二维码' : '生成配对二维码'}</button>
+            <button className="primary" disabled={!status.running || pairingBusy} onClick={() => void createPairing()}>{pairing ? '重新生成二维码' : '生成配对二维码'}</button>
           </div>
         </div>
         {!status.running && <div className="empty-state">请先启动 Rust 服务，再生成移动端配对二维码。</div>}
@@ -414,7 +416,7 @@ export default function App() {
 
       <section className="config-panel">
         <div className="section-heading">
-          <div><span className="eyebrow">媒体库</span><h3>本地文件夹</h3></div>
+          <div><span className="eyebrow">媒体库配置</span><h3>本地文件夹</h3></div>
           <button className="secondary" onClick={addLibrary}>添加媒体库</button>
         </div>
         <div className="library-list">
@@ -435,7 +437,7 @@ export default function App() {
       </section>
 
       <section className="settings-card">
-        <div><span className="eyebrow">配置与迁移</span><h3>配置文件</h3><code>{status.configPath || '正在初始化…'}</code><p>保存配置会校验字段、停止当前服务并使用新配置重新启动。首次 Rust 迁移会自动备份旧数据库。</p></div>
+        <div><span className="eyebrow">配置与迁移</span><h3>配置文件</h3><code>{status.configPath || '正在初始化…'}</code><p>保存配置会完成字段校验、等待当前端口释放，再使用新配置启动服务。首次 Rust 迁移会自动备份旧数据库。</p></div>
         <button className="secondary" disabled={!status.configPath} onClick={() => void copyConfigPath()}>复制路径</button>
       </section>
 
