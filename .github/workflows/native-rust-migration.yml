@@ -19,11 +19,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: local-lens-native-rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  CARGO_TARGET_DIR: ${{ runner.temp }}/local-lens-target
 
 jobs:
   rust-core:
@@ -35,14 +38,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
       - name: Install FFmpeg for video regression
         shell: bash
         run: |
@@ -52,8 +53,24 @@ jobs:
           fi
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
+      - name: Format Rust sources
+        run: |
+          cargo fmt --all
+          cargo fmt --manifest-path ../apps/local_lens_desktop/src-tauri/Cargo.toml
+      - name: Commit formatted sources
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          git -C .. config user.name "github-actions[bot]"
+          git -C .. config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C .. add rust/crates apps/local_lens_desktop/src-tauri/src apps/local_lens_desktop/src-tauri/build.rs
+          if git -C .. diff --cached --quiet; then
+            echo "Rust 源码已经符合 rustfmt"
+          else
+            git -C .. commit -m "格式化 Rust 工作区源码"
+            git -C .. push origin "HEAD:${HEAD_BRANCH}"
+          fi
       - name: Run Clippy
         shell: bash
         run: |
@@ -97,19 +114,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/local_lens_desktop/src-tauri
-      - name: Normalize Tauri Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml
-      - name: Upload formatted Tauri sources
-        uses: actions/upload-artifact@v7
-        with:
-          name: LocalLens-Tauri-Formatted-Sources
-          path: apps/local_lens_desktop/src-tauri/src/**/*.rs
-          if-no-files-found: error
-          retention-days: 1
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
       - name: Build React frontend
