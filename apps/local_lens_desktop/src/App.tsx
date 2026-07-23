@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface RuntimeStatus {
@@ -38,6 +38,23 @@ interface AppConfig {
   libraries: LibraryConfig[];
 }
 
+interface PairingSession {
+  id: string;
+  payload: string;
+  expiresAt: string;
+  qrUrl: string;
+}
+
+interface Device {
+  id: string;
+  name: string;
+  platform: string;
+  scopes: string;
+  createdAt: string;
+  lastSeenAt?: string | null;
+  revokedAt?: string | null;
+}
+
 const emptyStatus: RuntimeStatus = {
   running: false,
   serverName: 'LocalLens',
@@ -67,11 +84,51 @@ const emptyConfig: AppConfig = {
   libraries: [],
 };
 
+function localApiBase(listenAddress: string) {
+  const lastColon = listenAddress.lastIndexOf(':');
+  const port = lastColon >= 0 ? listenAddress.slice(lastColon + 1) : '9527';
+  return `http://127.0.0.1:${port || '9527'}`;
+}
+
+async function apiError(response: Response) {
+  try {
+    const body = await response.json() as { error?: string };
+    return body.error || `HTTP ${response.status}`;
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
+async function blobToDataUrl(blob: Blob) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('读取二维码失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return '尚未连接';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 export default function App() {
   const [status, setStatus] = useState<RuntimeStatus>(emptyStatus);
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [busy, setBusy] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
   const [message, setMessage] = useState('正在读取本地服务状态…');
+  const [pairing, setPairing] = useState<PairingSession | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [now, setNow] = useState(Date.now());
+
+  const apiBase = useMemo(() => localApiBase(status.listenAddress), [status.listenAddress]);
+  const remainingSeconds = pairing
+    ? Math.max(0, Math.ceil((new Date(pairing.expiresAt).getTime() - now) / 1000))
+    : 0;
 
   const refresh = useCallback(async () => {
     try {
@@ -87,9 +144,37 @@ export default function App() {
     }
   }, []);
 
+  const loadDevices = useCallback(async () => {
+    if (!status.running || !config.api_token) {
+      setDevices([]);
+      return;
+    }
+    try {
+      const response = await fetch(`${apiBase}/api/v1/devices`, {
+        headers: { Authorization: `Bearer ${config.api_token}` },
+      });
+      if (!response.ok) throw new Error(await apiError(response));
+      const body = await response.json() as { items: Device[] };
+      setDevices(body.items ?? []);
+    } catch (error) {
+      setMessage(`读取设备失败：${String(error)}`);
+    }
+  }, [apiBase, config.api_token, status.running]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void loadDevices();
+  }, [loadDevices]);
+
+  useEffect(() => {
+    if (!pairing) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
 
   const changeRuntime = async (action: 'start_server' | 'stop_server') => {
     setBusy(true);
@@ -97,6 +182,11 @@ export default function App() {
     try {
       await invoke(action);
       await refresh();
+      if (action === 'stop_server') {
+        setPairing(null);
+        setQrDataUrl('');
+        setDevices([]);
+      }
     } catch (error) {
       setMessage(`操作失败：${String(error)}`);
     } finally {
@@ -109,6 +199,8 @@ export default function App() {
     setMessage('正在保存配置并重启 Rust 服务…');
     try {
       await invoke('save_config', { config });
+      setPairing(null);
+      setQrDataUrl('');
       await refresh();
       setMessage('配置已保存，Rust 服务已重新启动');
     } catch (error) {
@@ -118,9 +210,60 @@ export default function App() {
     }
   };
 
+  const createPairing = async () => {
+    setPairingBusy(true);
+    setMessage('正在创建一次性配对二维码…');
+    try {
+      const response = await fetch(`${apiBase}/api/v1/pairing/session`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.api_token}` },
+      });
+      if (!response.ok) throw new Error(await apiError(response));
+      const session = await response.json() as PairingSession;
+      const qrResponse = await fetch(`${apiBase}${session.qrUrl}`, {
+        headers: { Authorization: `Bearer ${config.api_token}` },
+      });
+      if (!qrResponse.ok) throw new Error(await apiError(qrResponse));
+      setPairing(session);
+      setQrDataUrl(await blobToDataUrl(await qrResponse.blob()));
+      setNow(Date.now());
+      setMessage('二维码已生成，请使用 Android 客户端扫描');
+    } catch (error) {
+      setPairing(null);
+      setQrDataUrl('');
+      setMessage(`创建配对二维码失败：${String(error)}`);
+    } finally {
+      setPairingBusy(false);
+    }
+  };
+
+  const revokeDevice = async (device: Device) => {
+    if (!window.confirm(`确定撤销设备“${device.name}”吗？撤销后该设备需要重新配对。`)) return;
+    setPairingBusy(true);
+    try {
+      const response = await fetch(`${apiBase}/api/v1/devices/${encodeURIComponent(device.id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${config.api_token}` },
+      });
+      if (!response.ok) throw new Error(await apiError(response));
+      await loadDevices();
+      setMessage(`设备“${device.name}”已撤销`);
+    } catch (error) {
+      setMessage(`撤销设备失败：${String(error)}`);
+    } finally {
+      setPairingBusy(false);
+    }
+  };
+
   const copyConfigPath = async () => {
     await navigator.clipboard.writeText(status.configPath);
     setMessage('配置文件路径已复制');
+  };
+
+  const copyPairingPayload = async () => {
+    if (!pairing) return;
+    await navigator.clipboard.writeText(pairing.payload);
+    setMessage('配对信息已复制');
   };
 
   const update = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
@@ -187,6 +330,50 @@ export default function App() {
         <article className="info-card"><span>监听地址</span><strong>{status.listenAddress}</strong><small>手机需访问 Windows 局域网地址</small></article>
         <article className="info-card"><span>公开地址</span><strong>{status.publicUrl || '尚未设置'}</strong><small>用于生成 Android 配对信息</small></article>
         <article className="info-card"><span>数据目录</span><strong className="path-value">{status.dataDir || '尚未初始化'}</strong><small>兼容原有 locallens.db</small></article>
+      </section>
+
+      <section className="config-panel">
+        <div className="section-heading">
+          <div><span className="eyebrow">移动端连接</span><h3>二维码配对与设备</h3></div>
+          <div className="actions">
+            <button className="secondary" disabled={!status.running || pairingBusy} onClick={() => void loadDevices()}>刷新设备</button>
+            <button className="primary" disabled={!status.running || !config.api_token || pairingBusy} onClick={() => void createPairing()}>{pairing ? '重新生成二维码' : '生成配对二维码'}</button>
+          </div>
+        </div>
+        {!status.running && <div className="empty-state">请先启动 Rust 服务，再生成移动端配对二维码。</div>}
+        {status.running && (
+          <div className="pairing-layout">
+            <div className="pairing-card">
+              {qrDataUrl && pairing ? (
+                <>
+                  <img className={remainingSeconds > 0 ? 'pairing-qr' : 'pairing-qr expired'} src={qrDataUrl} alt="LocalLens 配对二维码" />
+                  <strong>{remainingSeconds > 0 ? `二维码将在 ${remainingSeconds} 秒后过期` : '二维码已过期，请重新生成'}</strong>
+                  <small>二维码中的地址：{status.publicUrl || config.public_url}</small>
+                  <button className="secondary" disabled={remainingSeconds <= 0} onClick={() => void copyPairingPayload()}>复制配对信息</button>
+                </>
+              ) : (
+                <div className="pairing-placeholder">
+                  <span>QR</span>
+                  <strong>尚未生成二维码</strong>
+                  <small>二维码为一次性凭据，成功配对或到期后自动失效。</small>
+                </div>
+              )}
+            </div>
+            <div className="device-list">
+              {devices.length === 0 && <div className="empty-state">暂无已配对设备。</div>}
+              {devices.map((device) => (
+                <article className="device-row" key={device.id}>
+                  <div>
+                    <strong>{device.name}</strong>
+                    <span>{device.platform || '未知平台'} · {device.revokedAt ? '已撤销' : '有效'}</span>
+                    <small>最近连接：{formatDate(device.lastSeenAt)}　创建：{formatDate(device.createdAt)}</small>
+                  </div>
+                  <button className="danger" disabled={pairingBusy || Boolean(device.revokedAt)} onClick={() => void revokeDevice(device)}>{device.revokedAt ? '已撤销' : '撤销'}</button>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="config-panel">
