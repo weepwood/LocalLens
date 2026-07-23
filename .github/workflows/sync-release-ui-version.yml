@@ -1,0 +1,41 @@
+name: Sync release UI version
+
+on:
+  push:
+    branches:
+      - release/v0.8.0-lap-workspace
+
+permissions:
+  contents: write
+
+jobs:
+  sync-version:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: release/v0.8.0-lap-workspace
+      - name: Update displayed version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/local_lens_desktop/src/App.tsx')
+          content = path.read_text(encoding='utf-8')
+          old = 'LocalLens v0.7.1'
+          new = 'LocalLens v0.8.0'
+          if old not in content:
+              raise SystemExit('未找到待替换的桌面版本文本')
+          path.write_text(content.replace(old, new), encoding='utf-8')
+          PY
+      - name: Commit synchronized version
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/local_lens_desktop/src/App.tsx
+          git commit -m "发布：同步桌面界面版本为 0.8.0"
+          git push
