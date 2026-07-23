@@ -2,16 +2,21 @@ use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
-use local_lens_core::{AppConfig, LibraryConfig};
+use local_lens_core::{
+    AppConfig, Device, LibraryConfig, LibraryInfo, MediaItem, MediaPage, MediaQuery, MediaStats,
+    ScanStatus,
+};
+use local_lens_server::{AppState, PairingSessionResponse};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Manager, State, ipc::Response as IpcResponse};
 use tokio::{
-    sync::oneshot,
+    net::TcpListener,
+    sync::{Mutex, RwLock, oneshot},
     time::{Duration, sleep},
 };
 
@@ -19,30 +24,46 @@ use tokio::{
 struct RuntimeState {
     config_path: PathBuf,
     running: Arc<AtomicBool>,
-    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    shutdown: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
+    lifecycle: Arc<Mutex<()>>,
+    app_state: Arc<RwLock<Option<AppState>>>,
 }
 
 impl RuntimeState {
     async fn start(&self) -> Result<(), String> {
-        if self.running.swap(true, Ordering::SeqCst) {
+        let _guard = self.lifecycle.lock().await;
+        if self.running.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let config = match AppConfig::load(&self.config_path) {
-            Ok(config) => config,
-            Err(error) => {
-                self.running.store(false, Ordering::SeqCst);
-                return Err(error.to_string());
-            }
-        };
+
+        let config = AppConfig::load(&self.config_path).map_err(|error| error.to_string())?;
+        let listener = TcpListener::bind(&config.listen_address)
+            .await
+            .map_err(|error| format!("无法监听 {}：{error}", config.listen_address))?;
+        let app_state = AppState::new(config)
+            .await
+            .map_err(|error| format!("初始化 Rust 服务失败：{error}"))?;
+        app_state
+            .start_background()
+            .await
+            .map_err(|error| format!("启动后台任务失败：{error}"))?;
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown.lock().map_err(|_| "服务状态锁已损坏")? = Some(shutdown_tx);
+        *self.app_state.write().await = Some(app_state.clone());
+        self.running.store(true, Ordering::SeqCst);
+
         let running = self.running.clone();
         let shutdown = self.shutdown.clone();
+        let holder = self.app_state.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(error) = local_lens_server::serve(config, shutdown_rx).await {
+            if let Err(error) =
+                local_lens_server::serve_on_listener(app_state, listener, shutdown_rx).await
+            {
                 tracing::error!(%error, "内嵌 Rust 服务退出");
             }
             running.store(false, Ordering::SeqCst);
+            holder.write().await.take();
             if let Ok(mut sender) = shutdown.lock() {
                 sender.take();
             }
@@ -50,12 +71,34 @@ impl RuntimeState {
         Ok(())
     }
 
-    fn stop(&self) -> Result<(), String> {
+    async fn stop(&self) -> Result<(), String> {
+        let _guard = self.lifecycle.lock().await;
+        if !self.running.load(Ordering::SeqCst) {
+            self.app_state.write().await.take();
+            return Ok(());
+        }
         if let Some(sender) = self.shutdown.lock().map_err(|_| "服务状态锁已损坏")?.take() {
             let _ = sender.send(());
         }
+        for _ in 0..180 {
+            if !self.running.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        if let Some(current) = self.app_state.write().await.take() {
+            current.runtime.stop().await;
+        }
         self.running.store(false, Ordering::SeqCst);
-        Ok(())
+        Err("等待 Rust 服务停止超时，请重新打开 LocalLens".into())
+    }
+
+    async fn current(&self) -> Result<AppState, String> {
+        self.app_state
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "Rust 服务尚未完成启动，请稍后重试".to_string())
     }
 }
 
@@ -77,8 +120,8 @@ async fn start_server(state: State<'_, RuntimeState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn stop_server(state: State<'_, RuntimeState>) -> Result<(), String> {
-    state.stop()
+async fn stop_server(state: State<'_, RuntimeState>) -> Result<(), String> {
+    state.stop().await
 }
 
 #[tauri::command]
@@ -114,12 +157,159 @@ async fn save_config(state: State<'_, RuntimeState>, mut config: AppConfig) -> R
         .parent()
         .ok_or_else(|| "配置文件目录无效".to_string())?;
     config.normalize(base).map_err(|error| error.to_string())?;
-    runtime.stop()?;
+    runtime.stop().await?;
     config
         .save(&runtime.config_path)
         .map_err(|error| error.to_string())?;
-    sleep(Duration::from_millis(800)).await;
     runtime.start().await
+}
+
+#[tauri::command]
+async fn desktop_create_pairing(
+    state: State<'_, RuntimeState>,
+) -> Result<PairingSessionResponse, String> {
+    let current = state.current().await?;
+    current
+        .runtime
+        .pairing
+        .create(&current, &current.config.public_url)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_pairing_qr(
+    state: State<'_, RuntimeState>,
+    session_id: String,
+) -> Result<IpcResponse, String> {
+    let current = state.current().await?;
+    let bytes = current
+        .runtime
+        .pairing
+        .qr_png(&session_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(IpcResponse::new(bytes))
+}
+
+#[tauri::command]
+async fn desktop_devices(state: State<'_, RuntimeState>) -> Result<Vec<Device>, String> {
+    let current = state.current().await?;
+    current.store.devices().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_revoke_device(
+    state: State<'_, RuntimeState>,
+    id: String,
+) -> Result<(), String> {
+    let current = state.current().await?;
+    if current
+        .store
+        .revoke_device(&id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Ok(())
+    } else {
+        Err("设备不存在或已经撤销".into())
+    }
+}
+
+#[tauri::command]
+async fn desktop_libraries(state: State<'_, RuntimeState>) -> Result<Vec<LibraryInfo>, String> {
+    let current = state.current().await?;
+    current.store.libraries().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_stats(state: State<'_, RuntimeState>) -> Result<MediaStats, String> {
+    let current = state.current().await?;
+    current.store.stats().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_media_page(
+    state: State<'_, RuntimeState>,
+    query: MediaQuery,
+) -> Result<MediaPage, String> {
+    let current = state.current().await?;
+    current
+        .store
+        .media_page(&query)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_set_favorite(
+    state: State<'_, RuntimeState>,
+    id: String,
+    favorite: bool,
+) -> Result<MediaItem, String> {
+    let current = state.current().await?;
+    current
+        .store
+        .set_favorite(&id, favorite)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "媒体不存在".to_string())
+}
+
+#[tauri::command]
+async fn desktop_set_rating(
+    state: State<'_, RuntimeState>,
+    id: String,
+    rating: i64,
+) -> Result<MediaItem, String> {
+    let current = state.current().await?;
+    current
+        .store
+        .set_rating(&id, rating)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "媒体不存在".to_string())
+}
+
+#[tauri::command]
+async fn desktop_media_bytes(
+    state: State<'_, RuntimeState>,
+    id: String,
+    thumbnail: bool,
+    width: i64,
+) -> Result<IpcResponse, String> {
+    let current = state.current().await?;
+    let media = current
+        .store
+        .media_by_id(&id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "媒体不存在".to_string())?;
+    let path = if thumbnail {
+        local_lens_server::generate_thumbnail(&current, &media, width)
+            .await
+            .map_err(|error| error.to_string())?
+    } else {
+        current
+            .media_path(&media)
+            .ok_or_else(|| "媒体路径不安全".to_string())?
+    };
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|error| format!("读取媒体失败：{error}"))?;
+    Ok(IpcResponse::new(bytes))
+}
+
+#[tauri::command]
+async fn desktop_start_scan(state: State<'_, RuntimeState>) -> Result<bool, String> {
+    let current = state.current().await?;
+    Ok(local_lens_server::start_scan(current).await)
+}
+
+#[tauri::command]
+async fn desktop_scan_status(state: State<'_, RuntimeState>) -> Result<ScanStatus, String> {
+    let current = state.current().await?;
+    Ok(current.runtime.scan_status.read().await.clone())
 }
 
 fn detect_public_url(listen_address: &str) -> String {
@@ -203,7 +393,9 @@ pub fn run() {
             let state = RuntimeState {
                 config_path,
                 running: Arc::new(AtomicBool::new(false)),
-                shutdown: Arc::new(Mutex::new(None)),
+                shutdown: Arc::new(StdMutex::new(None)),
+                lifecycle: Arc::new(Mutex::new(())),
+                app_state: Arc::new(RwLock::new(None)),
             };
             let startup_state = state.clone();
             app.manage(state);
@@ -220,7 +412,19 @@ pub fn run() {
             suggest_public_url,
             save_config,
             start_server,
-            stop_server
+            stop_server,
+            desktop_create_pairing,
+            desktop_pairing_qr,
+            desktop_devices,
+            desktop_revoke_device,
+            desktop_libraries,
+            desktop_stats,
+            desktop_media_page,
+            desktop_set_favorite,
+            desktop_set_rating,
+            desktop_media_bytes,
+            desktop_start_scan,
+            desktop_scan_status
         ])
         .run(tauri::generate_context!())
         .expect("启动 LocalLens Tauri 应用失败");
