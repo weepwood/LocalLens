@@ -2,7 +2,7 @@
 
 LocalLens 是一个本地优先的图片与视频管理系统。媒体原文件保存在用户选择的 Windows 文件夹中，LocalLens 只维护 SQLite 索引、缩略图、元数据、播放记录和虚拟分类。
 
-当前主架构正在迁移到：
+当前正式架构：
 
 - Windows 桌面端：Tauri 2 + React + TypeScript；
 - 后端处理：Rust + Axum + SQLx + SQLite；
@@ -10,17 +10,16 @@ LocalLens 是一个本地优先的图片与视频管理系统。媒体原文件�
 - 媒体工具：FFmpeg / FFprobe；
 - 局域网协议：兼容原有 `/api/v1` REST API。
 
-> `server/` 和 `apps/local_lens/` 中的 Go / Flutter 实现暂时保留为迁移对照，不再作为新版本的正式架构或发布产物。
+> `server/`、`apps/local_lens/` 和 `apps/local_lens_mobile/` 中的旧 Go、Flutter 与 React Native 实现暂时保留为迁移对照，不再作为正式架构或发布产物。
 
 ## 功能
 
 ### Rust 后端
 
-- 全量扫描与增量索引；
-- Windows 文件系统实时监听与事件防抖；
-- 大文件稳定后再写入索引；
+- 全量扫描、增量索引和文件系统实时监听；
+- 文件事件防抖，大文件稳定后再写入索引；
 - 旧版 `locallens.db` 原地升级；
-- 首次 Rust 迁移前自动备份数据库、WAL 和 SHM 文件；
+- 首次 Rust 迁移前自动备份数据库、WAL 和 SHM；
 - SQLite WAL、外键、忙等待和有限连接池；
 - 持久化缩略图、元数据和转码任务队列；
 - 服务重启后恢复未完成任务；
@@ -32,7 +31,7 @@ LocalLens 是一个本地优先的图片与视频管理系统。媒体原文件�
 - HLS 转码、字幕发现和转码缓存配额；
 - 文件夹树、收藏、0～5 星评分、相册和标签；
 - 跨设备共享播放进度；
-- 一次性二维码配对、设备 Token 和设备撤销；
+- 一次性二维码配对、设备 Token、设备列表和撤销；
 - 管理员接口与设备接口权限隔离；
 - 媒体根目录边界与路径穿越防护。
 
@@ -40,10 +39,15 @@ LocalLens 是一个本地优先的图片与视频管理系统。媒体原文件�
 
 - Rust/Axum 服务直接运行在 Tauri 进程内；
 - 不再启动外部 Go 服务进程；
-- 查看、启动和停止本地服务；
+- 查看、启动、停止和重启本地服务；
+- 编辑局域网地址、数据目录、任务 Worker、转码方式与媒体库；
+- 首次启动自动检测 Windows 局域网 IPv4；
+- 支持手动重新检测公开地址；
+- 生成一次性配对二维码并显示过期倒计时；
+- 查看已配对设备和最近连接时间；
+- 撤销设备 Token；
 - 自动创建配置和数据目录；
 - 正式构建自动携带 FFmpeg 与 FFprobe；
-- 首次启动把媒体工具复制到用户数据目录；
 - 生成 MSI 和 NSIS Windows 安装包；
 - 另行生成 Rust 独立服务压缩包。
 
@@ -96,12 +100,13 @@ LocalLens/
 │   └── local_lens_android/        # Kotlin 原生 Android
 ├── server/                        # 旧 Go 实现，仅作迁移对照
 ├── apps/local_lens/               # 旧 Flutter 实现，仅作迁移对照
+├── apps/local_lens_mobile/        # React Native 试验实现，仅作迁移对照
 └── docs/
 ```
 
 ## 正式构建产物
 
-GitHub Actions 新构建流程只生成：
+GitHub Actions 只生成：
 
 - Tauri 2 Windows MSI；
 - Tauri 2 Windows NSIS 安装程序；
@@ -113,7 +118,7 @@ GitHub Actions 新构建流程只生成：
 
 ## 从源码运行 Rust 服务
 
-复制旧版示例配置，或新建 `config.json`：
+复制示例配置，或新建 `config.json`：
 
 ```json
 {
@@ -158,7 +163,7 @@ cargo run --manifest-path .\rust\Cargo.toml `
 Invoke-RestMethod http://127.0.0.1:9527/api/v1/health
 ```
 
-`public_url` 必须填写 Android 设备能够访问的局域网地址，否则配对二维码可能包含 `127.0.0.1`。
+`public_url` 必须是 Android 能访问的 HTTP/HTTPS 服务根地址，不能包含路径、查询参数、账号或密码。Tauri 桌面端可以自动检测局域网地址。
 
 ## 数据升级
 
@@ -171,7 +176,7 @@ Rust 后端继续使用原有 `data/locallens.db`，不要求重新扫描后才�
 3. 原地补齐 Rust 需要的表、列和索引；
 4. 写入 `.rust-backend-migration-v1`，避免后续重复备份。
 
-大规模正式切换前仍建议完整备份 `data` 目录和媒体配置。
+大规模正式切换前仍建议完整备份 `data` 目录和媒体配置。旧 Go 服务与 Rust 服务不能同时写入同一数据库。
 
 ## Windows 防火墙
 
@@ -196,32 +201,33 @@ New-NetFirewallRule `
 - 包含 `..`、绝对路径或 Windows 路径前缀的媒体路径会被拒绝；
 - Token 只以 SHA-256 哈希保存在设备表；
 - 一次性配对密钥使用后立即失效；
-- 设备 Token 不能启动全量扫描、生成新二维码或撤销其他设备；
+- 设备 Token 不能启动扫描、生成二维码或撤销其他设备；
 - 相册、标签、收藏和评分不会修改原始文件；
-- 当前仍不提供远程删除、移动或重命名原始文件的接口。
+- 当前不提供远程删除、移动或重命名原始文件的接口。
 
-## 验证
+## 自动化验证
 
 CI 会执行：
 
-- `cargo fmt`；
+- `cargo fmt --check`；
 - Clippy，启用 `-D warnings`；
 - Rust Workspace 测试；
 - 旧 SQLite 原地升级与备份测试；
-- 临时真实媒体库扫描测试；
-- 缩略图生成测试；
-- 收藏、评分、相册和标签测试；
-- 播放进度测试；
-- 一次性配对和设备 Token 测试；
+- 临时真实媒体库扫描和缩略图测试；
+- 收藏、评分、相册、标签和播放进度测试；
+- 二维码 PNG、一次性配对、设备列表和撤销失效测试；
 - 路径穿越拦截测试；
-- Tauri Windows Rust 宿主检查与安装包构建；
+- 现场生成真实 H.264 MP4；
+- FFprobe 元数据、HTTP Range、字幕发现、直接播放和 HLS 转码测试；
+- Tauri React 构建、Rust 宿主检查和安装包构建；
 - Kotlin 原生 Android APK 构建。
 
 ## 当前发布限制
 
-- Android Release 目前仍使用开发签名，只适合测试和侧载，不适合直接提交应用商店；
-- Windows FFmpeg 为独立第三方程序，发布时必须保留来源和许可证说明；
-- HLS 自动转码需要实际硬件和不同编码样本继续做设备级回归；
+- Android APK 当前使用开发签名，只适合测试和侧载；
+- Windows 安装包尚未进行 Authenticode 签名，可能显示未知发布者；
+- 正式商店发布需要维护者提供 Android keystore、Windows 代码签名证书和更新签名密钥；
+- Windows FFmpeg 是独立第三方程序，发布时必须保留来源和许可证说明；
 - iOS 客户端不在当前迁移范围内。
 
 详见 [API 文档](docs/api.md)、[架构文档](docs/architecture.md) 和 [Rust 迁移说明](docs/native-rust-migration.md)。
