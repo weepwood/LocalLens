@@ -1,3 +1,5 @@
+mod desktop_media;
+
 use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
@@ -21,7 +23,7 @@ use tokio::{
 };
 
 #[derive(Clone)]
-struct RuntimeState {
+pub(crate) struct RuntimeState {
     config_path: PathBuf,
     running: Arc<AtomicBool>,
     shutdown: Arc<StdMutex<Option<oneshot::Sender<()>>>>,
@@ -93,7 +95,7 @@ impl RuntimeState {
         Err("等待 Rust 服务停止超时，请重新打开 LocalLens".into())
     }
 
-    async fn current(&self) -> Result<AppState, String> {
+    pub(crate) async fn current(&self) -> Result<AppState, String> {
         self.app_state
             .read()
             .await
@@ -433,7 +435,19 @@ pub fn run() {
             desktop_set_rating,
             desktop_media_bytes,
             desktop_start_scan,
-            desktop_scan_status
+            desktop_scan_status,
+            desktop_media::desktop_folders,
+            desktop_media::desktop_albums,
+            desktop_media::desktop_create_album,
+            desktop_media::desktop_delete_album,
+            desktop_media::desktop_tags,
+            desktop_media::desktop_create_tag,
+            desktop_media::desktop_delete_tag,
+            desktop_media::desktop_media_collections,
+            desktop_media::desktop_set_album_item,
+            desktop_media::desktop_set_media_tag,
+            desktop_media::desktop_batch_update,
+            desktop_media::desktop_reveal_media
         ])
         .run(tauri::generate_context!())
         .expect("启动 LocalLens Tauri 应用失败");
