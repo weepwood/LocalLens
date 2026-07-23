@@ -2,8 +2,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{Manager, State};
 use tokio::{
     sync::oneshot,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 
 #[derive(Clone)]
@@ -51,12 +51,7 @@ impl RuntimeState {
     }
 
     fn stop(&self) -> Result<(), String> {
-        if let Some(sender) = self
-            .shutdown
-            .lock()
-            .map_err(|_| "服务状态锁已损坏")?
-            .take()
-        {
+        if let Some(sender) = self.shutdown.lock().map_err(|_| "服务状态锁已损坏")?.take() {
             let _ = sender.send(());
         }
         self.running.store(false, Ordering::SeqCst);
@@ -112,10 +107,7 @@ fn suggest_public_url(state: State<'_, RuntimeState>) -> Result<String, String> 
 }
 
 #[tauri::command]
-async fn save_config(
-    state: State<'_, RuntimeState>,
-    mut config: AppConfig,
-) -> Result<(), String> {
+async fn save_config(state: State<'_, RuntimeState>, mut config: AppConfig) -> Result<(), String> {
     let runtime = state.inner().clone();
     let base = runtime
         .config_path

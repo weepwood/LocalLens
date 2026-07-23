@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 const DEFAULT_ICON: &str = "AAABAAEAICAAAAAAIADyAAAAFgAAAIlQTkcNChoKAAAADUlIRFIAAAAgAAAAIAgGAAAAc3p69AAAALlJREFUeJztVkEKgDAMi+JjfI++QB/mD3yP/kZPA6nTJXMwhAZ2GbVNuyyzGabtQEW0NYs7ASfgBACgy/1wXfrb3jjvcp5GNaJY4S9EpCNgiitxgDABmzTWJRNjQU2ATWz3mUnItyDVlSrEJIFrF7EOw3oikZpCtg/YxIrwihAohf8SsHrIcUGA9IE3IX6NlyeQEpsqRooAazA5Tig9Rkp3rCakI2CTKoKUn+OAav8DpfFfI3ICTqAUTo2PUlR+dzbsAAAAAElFTkSuQmCC";
 

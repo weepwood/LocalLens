@@ -3,7 +3,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use crate::{random_id, Album, AppConfig, AuthIdentity, Device, PlaybackProgress, Tag};
+use crate::{Album, AppConfig, AuthIdentity, Device, PlaybackProgress, Tag, random_id};
 
 use super::Store;
 
@@ -205,14 +205,12 @@ GROUP BY t.id ORDER BY t.name COLLATE NOCASE"#,
 
     pub async fn set_media_tag(&self, media_id: &str, tag_id: &str, add: bool) -> Result<()> {
         if add {
-            sqlx::query(
-                "INSERT OR IGNORE INTO media_tags(media_id,tag_id,added_at) VALUES(?,?,?)",
-            )
-            .bind(media_id)
-            .bind(tag_id)
-            .bind(Utc::now().to_rfc3339())
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("INSERT OR IGNORE INTO media_tags(media_id,tag_id,added_at) VALUES(?,?,?)")
+                .bind(media_id)
+                .bind(tag_id)
+                .bind(Utc::now().to_rfc3339())
+                .execute(&self.pool)
+                .await?;
         } else {
             sqlx::query("DELETE FROM media_tags WHERE media_id=? AND tag_id=?")
                 .bind(media_id)
@@ -223,10 +221,7 @@ GROUP BY t.id ORDER BY t.name COLLATE NOCASE"#,
         Ok(())
     }
 
-    pub async fn media_collections(
-        &self,
-        media_id: &str,
-    ) -> Result<(Vec<String>, Vec<String>)> {
+    pub async fn media_collections(&self, media_id: &str) -> Result<(Vec<String>, Vec<String>)> {
         let album_rows =
             sqlx::query("SELECT album_id FROM album_items WHERE media_id=? ORDER BY added_at")
                 .bind(media_id)
@@ -242,10 +237,7 @@ GROUP BY t.id ORDER BY t.name COLLATE NOCASE"#,
                 .into_iter()
                 .map(|row| row.get("album_id"))
                 .collect(),
-            tag_rows
-                .into_iter()
-                .map(|row| row.get("tag_id"))
-                .collect(),
+            tag_rows.into_iter().map(|row| row.get("tag_id")).collect(),
         ))
     }
 
@@ -266,12 +258,11 @@ GROUP BY t.id ORDER BY t.name COLLATE NOCASE"#,
                 scopes: "*".into(),
             });
         }
-        let row =
-            sqlx::query("SELECT id,name,scopes,revoked_at FROM devices WHERE token_hash=?")
-                .bind(hash_token(token))
-                .fetch_optional(&self.pool)
-                .await?
-                .context("设备 Token 不存在")?;
+        let row = sqlx::query("SELECT id,name,scopes,revoked_at FROM devices WHERE token_hash=?")
+            .bind(hash_token(token))
+            .fetch_optional(&self.pool)
+            .await?
+            .context("设备 Token 不存在")?;
         let revoked_at: Option<String> = row.try_get("revoked_at")?;
         if revoked_at.is_some() {
             anyhow::bail!("设备 Token 已撤销");

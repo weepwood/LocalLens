@@ -10,10 +10,10 @@ use axum::http::StatusCode;
 use local_lens_core::{
     MediaItem, PlaybackManifest, PlaybackRequest, SubtitleManifest, TranscodeJob,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::{
     process::Command,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 
 use crate::runtime::AppState;
@@ -38,9 +38,7 @@ pub fn start_transcode_workers(state: AppState) {
                     continue;
                 }
                 match worker_state.store.claim_transcode_job().await {
-                    Ok(Some(job)) => {
-                        process_transcode_job(&worker_state, job, number + 1).await
-                    }
+                    Ok(Some(job)) => process_transcode_job(&worker_state, job, number + 1).await,
                     Ok(None) => {
                         tokio::select! {
                             _ = shutdown.changed() => {},
@@ -144,11 +142,8 @@ pub async fn playback_manifest(
             failed_manifest(media, subtitles, &error.to_string()),
         ));
     }
-    let height = select_transcode_height(
-        media.height,
-        request.preferred_height,
-        request.max_height,
-    );
+    let height =
+        select_transcode_height(media.height, request.preferred_height, request.max_height);
     let profile = format!("h264-{height}p");
     let mut transcode = state.store.transcode_state(&media.id, &profile).await?;
     let playlist = transcode_profile_dir(state, &media.id, &profile).join("index.m3u8");
@@ -158,10 +153,7 @@ pub async fn playback_manifest(
             PlaybackManifest {
                 mode: "transcode".into(),
                 status: "ready".into(),
-                url: format!(
-                    "/api/v1/transcodes/{}/{}/index.m3u8",
-                    media.id, profile
-                ),
+                url: format!("/api/v1/transcodes/{}/{}/index.m3u8", media.id, profile),
                 mime_type: "application/vnd.apple.mpegurl".into(),
                 profile,
                 codec: "h264".into(),
@@ -209,11 +201,7 @@ pub fn subtitle_file(state: &AppState, media: &MediaItem, name: &str) -> Option<
     }
     let source = state.media_path(media)?;
     let path = source.parent()?.join(name);
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.is_file() { Some(path) } else { None }
 }
 
 pub fn transcode_file(
@@ -230,11 +218,7 @@ pub fn transcode_file(
         return None;
     }
     let path = transcode_profile_dir(state, media_id, profile).join(file);
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.is_file() { Some(path) } else { None }
 }
 
 pub async fn diagnostics(state: &AppState) -> Result<Value> {
@@ -338,10 +322,7 @@ fn ensure_ffmpeg(state: &AppState) -> Result<()> {
         anyhow::bail!("ffmpeg is not configured");
     }
     if !state.config.ffmpeg_path.is_file() {
-        anyhow::bail!(
-            "ffmpeg unavailable: {}",
-            state.config.ffmpeg_path.display()
-        );
+        anyhow::bail!("ffmpeg unavailable: {}", state.config.ffmpeg_path.display());
     }
     Ok(())
 }

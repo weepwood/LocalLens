@@ -123,15 +123,13 @@ RETURNING media_id,source_modified_at,attempts"#,
         status: &str,
         error: &str,
     ) -> Result<()> {
-        sqlx::query(
-            "UPDATE metadata_jobs SET status=?,last_error=?,updated_at=? WHERE media_id=?",
-        )
-        .bind(status)
-        .bind(error)
-        .bind(Utc::now().to_rfc3339())
-        .bind(&job.media_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE metadata_jobs SET status=?,last_error=?,updated_at=? WHERE media_id=?")
+            .bind(status)
+            .bind(error)
+            .bind(Utc::now().to_rfc3339())
+            .bind(&job.media_id)
+            .execute(&self.pool)
+            .await?;
         if status == "failed" {
             sqlx::query(
                 "UPDATE media_items SET metadata_status='failed',metadata_error=? WHERE id=?",
@@ -265,11 +263,13 @@ RETURNING media_id,profile,source_modified_at,attempts"#,
         .bind(profile)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map_or_else(TranscodeState::default, |row| TranscodeState {
-            status: row.get("status"),
-            progress: row.get("progress"),
-            error: row.get("last_error"),
-        }))
+        Ok(
+            row.map_or_else(TranscodeState::default, |row| TranscodeState {
+                status: row.get("status"),
+                progress: row.get("progress"),
+                error: row.get("last_error"),
+            }),
+        )
     }
 
     pub async fn retry_failed_transcodes(&self) -> Result<u64> {

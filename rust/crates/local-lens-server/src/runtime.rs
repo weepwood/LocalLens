@@ -3,17 +3,17 @@ use std::{
     mem,
     path::{Component, Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use anyhow::Result;
 use local_lens_core::{AppConfig, LibraryConfig, MediaItem, ScanStatus, Store};
 use tokio::{
-    sync::{watch, Notify, RwLock},
+    sync::{Notify, RwLock, watch},
     task::JoinHandle,
-    time::{timeout, Duration},
+    time::{Duration, timeout},
 };
 
 use crate::pairing::PairingManager;

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
+use sqlx::{QueryBuilder, Row, Sqlite, sqlite::SqliteRow};
 
 use crate::{FolderInfo, MediaItem, MediaPage, MediaQuery};
 
@@ -55,9 +55,8 @@ impl Store {
         match sort {
             "name" => list.push(" ORDER BY m.file_name COLLATE NOCASE ASC,m.id ASC"),
             "modified" => list.push(" ORDER BY m.modified_at DESC,m.id DESC"),
-            _ => list.push(
-                " ORDER BY COALESCE(NULLIF(m.captured_at,''),m.modified_at) DESC,m.id DESC",
-            ),
+            _ => list
+                .push(" ORDER BY COALESCE(NULLIF(m.captured_at,''),m.modified_at) DESC,m.id DESC"),
         };
         list.push(" LIMIT ").push_bind(limit + 1);
         if query.cursor.as_deref().unwrap_or_default().is_empty() && offset > 0 {
@@ -215,7 +214,9 @@ fn push_media_filters<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a Med
         .filter(|value| !value.trim().is_empty())
     {
         builder
-            .push(" AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.media_id=m.id AND ai.album_id=")
+            .push(
+                " AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.media_id=m.id AND ai.album_id=",
+            )
             .push_bind(album_id.trim())
             .push(")");
     }
@@ -290,8 +291,7 @@ fn decode_cursor(value: &str) -> Result<MediaCursor> {
     let bytes = URL_SAFE_NO_PAD
         .decode(value)
         .context("invalid cursor encoding")?;
-    let cursor: MediaCursor =
-        serde_json::from_slice(&bytes).context("invalid cursor payload")?;
+    let cursor: MediaCursor = serde_json::from_slice(&bytes).context("invalid cursor payload")?;
     if cursor.id.is_empty() || cursor.sort_at.is_empty() {
         anyhow::bail!("invalid cursor fields");
     }

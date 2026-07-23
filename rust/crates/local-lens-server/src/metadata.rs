@@ -256,8 +256,7 @@ fn gps_coordinate(value: &Value, reference: &str) -> Option<f64> {
     if parts.len() < 3 {
         return None;
     }
-    let mut coordinate =
-        parts[0].to_f64() + parts[1].to_f64() / 60.0 + parts[2].to_f64() / 3600.0;
+    let mut coordinate = parts[0].to_f64() + parts[1].to_f64() / 60.0 + parts[2].to_f64() / 3600.0;
     if reference.eq_ignore_ascii_case("S") || reference.eq_ignore_ascii_case("W") {
         coordinate = -coordinate;
     }

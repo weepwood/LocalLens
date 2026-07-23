@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use local_lens_core::Store;
-use sqlx::{
-    sqlite::SqliteConnectOptions,
-    Connection, Row, SqliteConnection,
-};
+use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 
 #[tokio::test]
 async fn legacy_database_is_backed_up_and_upgraded_in_place() -> Result<()> {

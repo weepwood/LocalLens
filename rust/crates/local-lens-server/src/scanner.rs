@@ -7,14 +7,12 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
-use local_lens_core::{
-    media_type_for_path, random_id, stable_id, LibraryConfig, ScanStatus,
-};
+use local_lens_core::{LibraryConfig, ScanStatus, media_type_for_path, random_id, stable_id};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use sqlx::{Sqlite, Transaction};
 use tokio::{
     sync::mpsc,
-    time::{interval, sleep, Duration, Instant},
+    time::{Duration, Instant, interval, sleep},
 };
 use walkdir::WalkDir;
 
@@ -430,11 +428,10 @@ async fn mark_missing(state: &AppState, library: &LibraryConfig, path: &Path) ->
 pub fn start_watcher(state: AppState) -> Result<()> {
     let (sender, mut receiver) = mpsc::unbounded_channel();
     let callback_sender = sender.clone();
-    let mut watcher: RecommendedWatcher = notify::recommended_watcher(
-        move |result: notify::Result<notify::Event>| {
+    let mut watcher: RecommendedWatcher =
+        notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
             let _ = callback_sender.send(result);
-        },
-    )?;
+        })?;
     for library in state.libraries.values() {
         if !library.enabled || !library.path.is_dir() {
             continue;

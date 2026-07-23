@@ -1,13 +1,13 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Extension, Path, Query, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
-    Json, Router,
 };
 use chrono::Utc;
 use local_lens_core::{
@@ -15,8 +15,8 @@ use local_lens_core::{
     ServerInfo,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
-use tokio::time::{sleep, Duration};
+use serde_json::{Value, json};
+use tokio::time::{Duration, sleep};
 use tower::ServiceExt;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -24,14 +24,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{
-    jobs,
-    pairing::PairingClaim,
-    playback,
-    runtime::AppState,
-    scanner,
-    VERSION,
-};
+use crate::{VERSION, jobs, pairing::PairingClaim, playback, runtime::AppState, scanner};
 
 pub fn router(state: AppState) -> Router {
     let public = Router::new()
@@ -111,11 +104,7 @@ pub fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-async fn authorize(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
+async fn authorize(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     let token = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -356,8 +345,8 @@ async fn thumbnail_file(
         }
     }
     if !path.is_file() {
-        let mut response = (StatusCode::ACCEPTED, Json(json!({ "status": "queued" })))
-            .into_response();
+        let mut response =
+            (StatusCode::ACCEPTED, Json(json!({ "status": "queued" }))).into_response();
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, HeaderValue::from_static("3"));
@@ -609,7 +598,9 @@ async fn transcode_retry(
     Extension(identity): Extension<AuthIdentity>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&identity)?;
-    Ok(Json(json!({ "retried": playback::retry_failed(&state).await? })))
+    Ok(Json(
+        json!({ "retried": playback::retry_failed(&state).await? }),
+    ))
 }
 
 async fn media_by_id(state: &AppState, id: &str) -> Result<MediaItem, ApiError> {

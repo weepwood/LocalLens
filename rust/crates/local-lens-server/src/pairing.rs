@@ -3,7 +3,7 @@ use std::{collections::HashMap, io::Cursor};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use image::{DynamicImage, GrayImage, ImageFormat, Luma};
-use local_lens_core::{random_id, Device};
+use local_lens_core::{Device, random_id};
 use qrcode::{Color, QrCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -54,11 +54,7 @@ struct PairingPayload {
 }
 
 impl PairingManager {
-    pub async fn create(
-        &self,
-        state: &AppState,
-        base_url: &str,
-    ) -> Result<PairingSessionResponse> {
+    pub async fn create(&self, state: &AppState, base_url: &str) -> Result<PairingSessionResponse> {
         let id = random_id();
         let secret = format!("{}{}", random_id(), random_id());
         let expires_at = Utc::now()
@@ -111,9 +107,7 @@ impl PairingManager {
         {
             let mut sessions = self.sessions.lock().await;
             remove_expired(&mut sessions);
-            let session = sessions
-                .get(pairing_id)
-                .context("配对会话不存在或已过期")?;
+            let session = sessions.get(pairing_id).context("配对会话不存在或已过期")?;
             if session.secret_hash != hash_token(secret) {
                 anyhow::bail!("配对密钥无效");
             }

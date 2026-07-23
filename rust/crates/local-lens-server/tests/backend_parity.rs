@@ -2,15 +2,15 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
 use image::{Rgb, RgbImage};
 use local_lens_core::{AppConfig, LibraryConfig};
-use local_lens_server::{router, AppState};
-use serde_json::{json, Value};
+use local_lens_server::{AppState, router};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::time::sleep;
 use tower::ServiceExt;
@@ -216,8 +216,7 @@ impl Fixture {
         let library = root.path().join("library");
         let data = root.path().join("data");
         std::fs::create_dir_all(&library)?;
-        RgbImage::from_pixel(64, 48, Rgb([32, 96, 160]))
-            .save(library.join("sample.png"))?;
+        RgbImage::from_pixel(64, 48, Rgb([32, 96, 160])).save(library.join("sample.png"))?;
         let config = AppConfig {
             listen_address: "127.0.0.1:0".into(),
             public_url: "http://127.0.0.1:9527".into(),
@@ -250,7 +249,11 @@ impl Fixture {
 
 async fn wait_for_scan(state: &AppState) -> Result<()> {
     for _ in 0..200 {
-        if !state.runtime.scanning.load(std::sync::atomic::Ordering::SeqCst) {
+        if !state
+            .runtime
+            .scanning
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             let status = state.runtime.scan_status.read().await.clone();
             if !status.error_message.is_empty() {
                 anyhow::bail!(status.error_message);
@@ -293,9 +296,8 @@ async fn call(
     let value = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            Value::String(String::from_utf8_lossy(&bytes).to_string())
-        })
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).to_string()))
     };
     Ok((status, value))
 }

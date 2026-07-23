@@ -8,8 +8,8 @@ use std::{path::Path, time::Duration};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     Row, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
 
 use crate::{LibraryConfig, LibraryInfo, MediaStats};

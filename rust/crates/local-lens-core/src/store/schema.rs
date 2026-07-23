@@ -148,29 +148,17 @@ impl Store {
             ),
             ("media_items", "width", "INTEGER NOT NULL DEFAULT 0"),
             ("media_items", "height", "INTEGER NOT NULL DEFAULT 0"),
-            (
-                "media_items",
-                "duration_ms",
-                "INTEGER NOT NULL DEFAULT 0",
-            ),
+            ("media_items", "duration_ms", "INTEGER NOT NULL DEFAULT 0"),
             ("media_items", "codec", "TEXT NOT NULL DEFAULT ''"),
             ("media_items", "latitude", "REAL"),
             ("media_items", "longitude", "REAL"),
-            (
-                "media_items",
-                "camera_model",
-                "TEXT NOT NULL DEFAULT ''",
-            ),
+            ("media_items", "camera_model", "TEXT NOT NULL DEFAULT ''"),
             (
                 "media_items",
                 "metadata_status",
                 "TEXT NOT NULL DEFAULT 'pending'",
             ),
-            (
-                "media_items",
-                "metadata_error",
-                "TEXT NOT NULL DEFAULT ''",
-            ),
+            ("media_items", "metadata_error", "TEXT NOT NULL DEFAULT ''"),
             ("media_items", "rating", "INTEGER NOT NULL DEFAULT 0"),
         ];
         for (table, column, definition) in columns {
