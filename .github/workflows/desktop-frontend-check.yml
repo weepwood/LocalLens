@@ -1,6 +1,12 @@
 name: Desktop frontend check
 
 on:
+  push:
+    branches:
+      - "feat/lap-parity-desktop"
+    paths:
+      - "apps/local_lens_desktop/**"
+      - ".github/workflows/desktop-frontend-check.yml"
   pull_request:
     paths:
       - "apps/local_lens_desktop/**"
