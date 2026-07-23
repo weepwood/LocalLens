@@ -1,6 +1,6 @@
 [package]
 name = "local-lens-desktop"
-version = "0.7.1"
+version = "0.8.0"
 description = "LocalLens Tauri 2 desktop application"
 authors = ["weepwood"]
 edition = "2024"
