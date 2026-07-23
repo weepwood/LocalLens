@@ -1,90 +1,143 @@
-# LocalLens 原生 Android 与 Rust 迁移方案
+# LocalLens 原生 Android 与 Rust 迁移说明
 
-## 目标架构
+## 当前状态
+
+LocalLens 的新架构迁移已经完成，正式构建链不再依赖 Go、Flutter 或 React Native：
 
 ```text
 Windows 本地文件夹
         ↓
 Rust LocalLens Core
-├── SQLite 兼容与迁移
-├── 文件扫描与实时监听
-├── FFmpeg / FFprobe 调用
-├── 缩略图与元数据任务
-├── Axum REST API
-└── 配对、设备与播放进度
+├── SQLite 兼容、备份与原地升级
+├── 文件扫描、增量索引与实时监听
+├── EXIF / FFprobe 元数据
+├── 缩略图、元数据与转码持久任务队列
+├── HLS 转码、字幕与缓存治理
+├── 配对、设备 Token 与共享播放进度
+└── Axum REST API
         ↓
 Tauri 2 Windows 管理端     Kotlin / Jetpack Compose Android 客户端
 ```
 
+旧 Go、Flutter 与 React Native 源码暂时保留为迁移对照，但不进入正式产物。
+
 ## 技术边界
 
-### 桌面端
+### Windows 桌面端
 
 - React + TypeScript + Vite 负责桌面管理界面；
-- Tauri 2 负责窗口、安装包、用户目录和 Rust 命令；
+- Tauri 2 负责窗口、安装包、用户目录与 Rust 命令；
 - Axum 服务直接运行在 Tauri Rust 进程中，不再启动 Go 子进程；
-- 桌面端可以停止、启动和查看本地 Rust 服务状态。
+- 支持启动、停止、查看和重启 Rust 服务；
+- 支持编辑服务地址、数据目录、任务 Worker、转码方式和媒体库；
+- 首次启动自动识别局域网 IPv4，也可在界面中重新检测公开地址；
+- 支持生成一次性配对二维码、显示过期倒计时、查看设备和撤销设备 Token；
+- 正式安装包自动携带 FFmpeg 与 FFprobe。
 
 ### Android
 
-- Kotlin 与 Jetpack Compose 构建标准 Android 原生 UI；
-- 使用 Android 生命周期、权限、后台服务和系统媒体能力；
-- 不使用 React Native、Flutter、WebView 或 Go GUI；
-- 只通过 `/api/v1` 访问 Windows Rust 服务。
+- Kotlin + Jetpack Compose + Material 3；
+- 使用 Google Code Scanner 完成二维码配对，应用本身不直接申请相机权限；
+- 使用 Media3 ExoPlayer 播放原始视频或 HLS；
+- 支持媒体网格、搜索、分页、筛选、收藏、评分和原图查看；
+- 支持共享播放进度；
+- 不使用 React Native、Flutter、WebView 或 Go GUI。
 
-### 数据与协议
+### Rust 后端
 
-- 继续使用原来的 `config.json` 字段；
-- 继续读取原来的 `data/locallens.db`；
-- 保留 `/api/v1` URL、JSON 字段和 Bearer Token 规则；
-- 新旧后端不可同时写入同一数据库；迁移期间必须确保 Go 服务已停止。
+- 使用 Axum、SQLx、SQLite 和 Tokio；
+- 保留原 `/api/v1`、JSON 字段和 Bearer Token 规则；
+- 支持全量扫描、增量索引和文件系统监听；
+- 支持 EXIF、FFprobe、图片缩略图和视频缩略图；
+- 使用持久任务队列处理缩略图、元数据与 HLS；
+- 支持相册、标签、文件夹树、收藏、0～5 星评分和播放进度；
+- 支持一次性配对、设备 Token、设备列表和撤销；
+- 支持 HTTP Range、直接播放协商、字幕发现和 HLS 缓存配额；
+- 拒绝路径穿越、绝对路径和媒体库根目录之外的访问。
 
-## 当前已完成
+## 配置与局域网
 
-- Rust workspace 与共享领域模型；
-- 兼容旧 SQLite 的连接、媒体查询、统计、收藏和评分；
-- Axum 的 health、server、libraries、stats、media、favorite、rating 与文件流接口；
-- Tauri 2 桌面管理程序和 Rust 服务生命周期管理；
-- Kotlin/Compose 原生 Android 连接、网格、搜索、筛选、收藏和图片预览；
-- 新的 Windows、Rust 和 Android 构建流程。
+`public_url` 用于写入二维码，必须满足：
 
-## 迁移阶段
+- 使用 `http` 或 `https`；
+- 包含主机名或 IP；
+- 是服务根地址；
+- 不包含用户名、密码、路径、查询参数或片段。
 
-### 阶段 1：双实现验证
+示例：
 
-保留旧 Go/Flutter 源码用于回归比较，但正式构建改为 Rust/Tauri/Android。重点验证：
+```json
+{
+  "listen_address": "0.0.0.0:9527",
+  "public_url": "http://192.168.1.20:9527"
+}
+```
 
-1. 原数据库能否直接打开；
-2. 媒体数量、收藏和评分是否一致；
-3. 图片与视频 Range 响应是否兼容；
-4. Android 在真实局域网中的连接和鉴权；
-5. Tauri 关闭时 Rust 服务能否正常停止。
+首次安装会尝试自动识别 Windows 局域网 IPv4。网络环境变化后，可在 Tauri 管理端点击“自动检测”，保存配置后重新生成二维码。
 
-### 阶段 2：Rust 后台任务迁移
+只应在 Windows 专用网络中放行 9527 端口，不应直接暴露到公网。远程访问建议使用可信 VPN。
 
-依次迁移：
+## 数据升级
 
-1. 全量扫描与增量扫描；
-2. notify 文件系统监听；
-3. FFprobe/EXIF 元数据提取；
-4. 缩略图持久队列；
-5. 视频转码和缓存；
-6. 配对、设备 Token 和撤销；
-7. 相册、标签、播放进度与目录接口。
+Rust 后端继续读取原来的 `config.json` 与 `data/locallens.db`。首次打开旧数据库时：
 
-### 阶段 3：删除旧实现
+1. 在 `data/backups/` 创建迁移前备份；
+2. 同时备份存在的 WAL 与 SHM 文件；
+3. 原地补齐表、字段和索引；
+4. 保留媒体索引、收藏、评分、相册、标签、设备和播放进度；
+5. 写入一次性迁移标记，防止重复备份。
 
-只有在 Rust API 契约测试与旧实现结果一致、现有数据库完成备份，并通过真实媒体库验证后，才删除：
+新旧后端不能同时写入同一数据库。切换前必须停止旧 Go 服务，并建议额外备份整个 `data` 目录。
 
-- `server/` Go 服务；
-- `apps/local_lens/` Flutter 客户端；
-- `apps/local_lens_mobile/` React Native 试验实现。
+## 自动化验证
 
-## 安全要求
+CI 当前执行：
 
-- 9527 端口只允许 Windows 专用网络；
-- Android Token 不写入日志；
-- 服务端必须拒绝包含 `..`、盘符或绝对路径的媒体路径；
-- Rust 服务只能读取配置声明的媒体根目录；
-- 正式版本需要 Android 签名、Tauri 代码签名和更新包签名；
-- 切换后端前备份 `config.json` 和整个 `data` 目录。
+- `cargo fmt --check`；
+- Clippy，启用 `-D warnings`；
+- Rust Workspace 单元测试与接口回归；
+- 旧 SQLite 原地升级和备份测试；
+- 真实临时媒体库扫描、缩略图和路径边界测试；
+- 收藏、评分、相册、标签和共享播放进度测试；
+- 二维码 PNG、一次性配对、设备 Token、设备列表和撤销失效测试；
+- 现场生成真实 H.264 MP4；
+- FFprobe 尺寸、时长和编码提取；
+- HTTP Range 206 响应；
+- SRT 字幕发现与读取；
+- 直接播放协商；
+- FFmpeg HLS 转码、播放列表和诊断接口；
+- Tauri React 构建和 Windows Rust 宿主检查；
+- Kotlin 原生 Android APK 构建；
+- Tauri MSI、NSIS 和独立 Rust 服务包构建。
+
+## 正式构建产物
+
+正式工作流生成：
+
+- Tauri 2 Windows MSI；
+- Tauri 2 Windows NSIS 安装程序；
+- `LocalLens-Rust-Server-Windows-x64.zip`；
+- `LocalLens-Native-Android.apk`；
+- `SHA256SUMS.txt`。
+
+独立 Rust 服务包包含服务程序、配置模板、FFmpeg、FFprobe 和第三方许可证说明。
+
+## 仍需外部凭据完成的事项
+
+代码迁移和功能对等已经完成，但公开分发前仍需要由项目维护者提供签名材料：
+
+- Android 正式 keystore 与密码；
+- Windows Authenticode 代码签名证书；
+- 后续自动更新包的签名密钥。
+
+没有签名材料时，CI 仍可生成用于测试和侧载的 APK、MSI 与 NSIS，但 Windows 可能显示未知发布者，Android 产物也不适合直接提交应用商店。
+
+## 旧实现清理策略
+
+以下目录暂时保留为回归参考：
+
+- `server/`：旧 Go 服务；
+- `apps/local_lens/`：旧 Flutter 客户端；
+- `apps/local_lens_mobile/`：React Native 试验实现。
+
+建议在新架构合并、完成真实 Windows 媒体库试运行并确认数据备份可恢复后，再通过独立 PR 删除旧实现，避免把架构迁移与历史清理混在同一个变更中。
