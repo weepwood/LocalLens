@@ -2,14 +2,14 @@ use std::{path::PathBuf, process::Command, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
 use local_lens_core::{AppConfig, LibraryConfig};
-use local_lens_server::{router, AppState};
-use serde_json::{json, Value};
+use local_lens_server::{AppState, router};
+use serde_json::{Value, json};
 use tokio::time::sleep;
 use tower::ServiceExt;
 
@@ -131,7 +131,8 @@ async fn real_video_metadata_range_subtitle_and_hls_pipeline() -> Result<()> {
         .context("subtitle url missing")?;
     let subtitle = call_raw_with_headers(&app, "GET", subtitle_url, None, &[]).await?;
     assert_eq!(subtitle.status(), StatusCode::OK);
-    let subtitle_text = String::from_utf8(subtitle.into_body().collect().await?.to_bytes().to_vec())?;
+    let subtitle_text =
+        String::from_utf8(subtitle.into_body().collect().await?.to_bytes().to_vec())?;
     assert!(subtitle_text.contains("LocalLens 视频回归测试"));
 
     let hls = wait_for_hls(&app, media_id).await?;
@@ -140,7 +141,8 @@ async fn real_video_metadata_range_subtitle_and_hls_pipeline() -> Result<()> {
     let playlist_url = hls["url"].as_str().context("playlist url missing")?;
     let playlist = call_raw_with_headers(&app, "GET", playlist_url, None, &[]).await?;
     assert_eq!(playlist.status(), StatusCode::OK);
-    let playlist_text = String::from_utf8(playlist.into_body().collect().await?.to_bytes().to_vec())?;
+    let playlist_text =
+        String::from_utf8(playlist.into_body().collect().await?.to_bytes().to_vec())?;
     assert!(playlist_text.contains("#EXTM3U"));
     assert!(playlist_text.contains("segment-"));
 
@@ -228,9 +230,8 @@ async fn call_json(
     let value = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            Value::String(String::from_utf8_lossy(&bytes).to_string())
-        })
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).to_string()))
     };
     Ok((status, value))
 }
