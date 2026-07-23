@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -98,6 +99,7 @@ impl AppConfig {
             };
             self.ffprobe_path = self.ffmpeg_path.parent().unwrap_or(base).join(executable);
         }
+
         self.public_url = self.public_url.trim().trim_end_matches('/').to_string();
         if self.public_url.is_empty() {
             self.public_url = format!(
@@ -105,6 +107,24 @@ impl AppConfig {
                 self.listen_address.replace("0.0.0.0", "127.0.0.1")
             );
         }
+        let public_url = Url::parse(&self.public_url)
+            .with_context(|| format!("public_url 不是有效 URL：{}", self.public_url))?;
+        if !matches!(public_url.scheme(), "http" | "https") {
+            anyhow::bail!("public_url 只支持 http 或 https");
+        }
+        if public_url.host_str().is_none() {
+            anyhow::bail!("public_url 必须包含主机名或 IP 地址");
+        }
+        if !public_url.username().is_empty() || public_url.password().is_some() {
+            anyhow::bail!("public_url 不能包含用户名或密码");
+        }
+        if public_url.path() != "/"
+            || public_url.query().is_some()
+            || public_url.fragment().is_some()
+        {
+            anyhow::bail!("public_url 必须是服务根地址，不能包含路径、查询参数或片段");
+        }
+        self.public_url = public_url.as_str().trim_end_matches('/').to_string();
 
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();
@@ -182,4 +202,54 @@ fn default_transcode_hardware() -> String {
 }
 fn default_pairing_ttl() -> u64 {
     5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config(public_url: &str) -> AppConfig {
+        AppConfig {
+            listen_address: "0.0.0.0:9527".into(),
+            public_url: public_url.into(),
+            server_name: "LocalLens Test".into(),
+            data_dir: PathBuf::from("data"),
+            api_token: "test-administrator-token-123456".into(),
+            ffmpeg_path: PathBuf::new(),
+            ffprobe_path: PathBuf::new(),
+            auto_scan: false,
+            watch_files: false,
+            thumbnail_workers: 1,
+            metadata_workers: 1,
+            transcode_workers: 1,
+            transcode_cache_gb: 1,
+            transcode_hardware: "software".into(),
+            pairing_ttl_minutes: 5,
+            libraries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn accepts_http_service_root() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut config = test_config("http://192.168.1.20:9527/");
+        config.normalize(root.path())?;
+        assert_eq!(config.public_url, "http://192.168.1.20:9527");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_non_root_or_credentialed_public_url() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        for value in [
+            "ftp://192.168.1.20:9527",
+            "http://user:pass@192.168.1.20:9527",
+            "http://192.168.1.20:9527/api",
+            "http://192.168.1.20:9527?token=secret",
+            "not-a-url",
+        ] {
+            let mut config = test_config(value);
+            assert!(config.normalize(root.path()).is_err(), "{value} should fail");
+        }
+    }
 }
