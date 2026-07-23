@@ -52,9 +52,7 @@ pub(crate) async fn desktop_folders(
 }
 
 #[tauri::command]
-pub(crate) async fn desktop_albums(
-    state: State<'_, RuntimeState>,
-) -> Result<Vec<Album>, String> {
+pub(crate) async fn desktop_albums(state: State<'_, RuntimeState>) -> Result<Vec<Album>, String> {
     let current = state.current().await?;
     current
         .store
