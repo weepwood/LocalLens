@@ -1,14 +1,17 @@
-# Go
-server/bin/
-server/data/
-server/config.json
+# Generated binaries and logs
 *.exe
 *.test
 *.out
+*.log
+
+# Runtime data and local configuration
+config.json
+data/
 
 # Rust / Tauri
 rust/target/
 apps/local_lens_desktop/src-tauri/target/
+apps/local_lens_desktop/src-tauri/runtime/media-tools/
 apps/local_lens_desktop/node_modules/
 apps/local_lens_desktop/dist/
 
@@ -16,19 +19,7 @@ apps/local_lens_desktop/dist/
 apps/local_lens_android/.gradle/
 apps/local_lens_android/app/build/
 apps/local_lens_android/build/
-
-# Flutter / Dart
-apps/local_lens/.dart_tool/
-apps/local_lens/.flutter-plugins
-apps/local_lens/.flutter-plugins-dependencies
-apps/local_lens/.packages
-apps/local_lens/build/
-apps/local_lens/android/
-apps/local_lens/ios/
-apps/local_lens/linux/
-apps/local_lens/macos/
-apps/local_lens/web/
-apps/local_lens/windows/
+apps/local_lens_android/dist/
 
 # IDE / OS
 .idea/
