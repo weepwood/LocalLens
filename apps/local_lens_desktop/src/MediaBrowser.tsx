@@ -81,10 +81,15 @@ const emptyStats: MediaStats = {
   transcodesPending: 0,
 };
 
-function binaryBytes(payload: BinaryPayload) {
-  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
-  if (payload instanceof Uint8Array) return payload;
-  return new Uint8Array(payload);
+function binaryBuffer(payload: BinaryPayload): ArrayBuffer {
+  const source = payload instanceof ArrayBuffer
+    ? new Uint8Array(payload)
+    : payload instanceof Uint8Array
+      ? payload
+      : new Uint8Array(payload);
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy.buffer;
 }
 
 function formatBytes(value: number) {
@@ -102,11 +107,6 @@ function formatDuration(value: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
 function MediaThumbnail({ item, width = 480 }: { item: MediaItem; width?: number }) {
   const [url, setUrl] = useState('');
   const [failed, setFailed] = useState(false);
@@ -121,7 +121,7 @@ function MediaThumbnail({ item, width = 480 }: { item: MediaItem; width?: number
       width,
     }).then((payload) => {
       if (!active) return;
-      objectUrl = URL.createObjectURL(new Blob([binaryBytes(payload)], { type: 'image/jpeg' }));
+      objectUrl = URL.createObjectURL(new Blob([binaryBuffer(payload)], { type: 'image/jpeg' }));
       setUrl(objectUrl);
     }).catch(() => {
       if (active) setFailed(true);
@@ -151,7 +151,7 @@ function MediaPreview({ item, onClose }: { item: MediaItem; onClose: () => void 
       width: 0,
     }).then((payload) => {
       if (!active) return;
-      objectUrl = URL.createObjectURL(new Blob([binaryBytes(payload)], { type: item.mimeType || 'image/jpeg' }));
+      objectUrl = URL.createObjectURL(new Blob([binaryBuffer(payload)], { type: item.mimeType || 'image/jpeg' }));
       setUrl(objectUrl);
     }).catch((reason) => {
       if (active) setError(String(reason));
