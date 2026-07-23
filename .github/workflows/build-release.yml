@@ -38,6 +38,17 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v7
+      - name: 检查旧实现已清理
+        working-directory: .
+        shell: bash
+        run: |
+          test ! -d server
+          test ! -d apps/local_lens
+          test ! -d apps/local_lens_mobile
+          if git grep -nE 'server/config\.example\.json|apps/local_lens_mobile|apps/local_lens/' -- .; then
+            echo "发现旧实现路径残留" >&2
+            exit 1
+          fi
       - name: 配置 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -139,7 +150,7 @@ jobs:
           $dist = Join-Path $PWD "dist/LocalLens-Rust-Server-Windows-x64"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
           Copy-Item "../../rust/target/release/local-lens-server.exe" (Join-Path $dist "LocalLensServer.exe")
-          Copy-Item "../../server/config.example.json" (Join-Path $dist "config.example.json")
+          Copy-Item "../../config.example.json" (Join-Path $dist "config.example.json")
           Copy-Item "src-tauri/runtime/media-tools/*" $dist -Force
           Compress-Archive -Path $dist -DestinationPath "dist/LocalLens-Rust-Server-Windows-x64.zip" -Force
       - name: 汇总 Windows 产物
