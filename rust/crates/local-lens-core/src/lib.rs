@@ -5,5 +5,5 @@ mod util;
 
 pub use config::{AppConfig, LibraryConfig};
 pub use model::*;
-pub use store::Store;
+pub use store::{BackupSnapshot, DatabaseHealth, Store};
 pub use util::{media_type_for_path, random_id, stable_id};
