@@ -46,11 +46,23 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: 格式化 Rust
-        run: cargo fmt --all
+      - name: 安装真实视频回归依赖
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+      - name: 检查 Rust 格式
+        run: cargo fmt --all -- --check
       - name: 执行 Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: 执行后端回归测试
+        env:
+          FFMPEG_PATH: /usr/bin/ffmpeg
+          FFPROBE_PATH: /usr/bin/ffprobe
         run: cargo test --workspace
 
   tauri-windows:
