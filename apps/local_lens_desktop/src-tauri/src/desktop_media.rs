@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 use local_lens_core::{Album, FolderInfo, MediaItem, Tag};
@@ -203,7 +204,7 @@ pub(crate) async fn desktop_batch_update(
     let mut updated = 0;
     let mut failed = Vec::new();
 
-    for id in request.ids {
+    for id in request.ids.iter().cloned() {
         let result = async {
             let media = current
                 .store
