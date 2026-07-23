@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use axum::{
-    body::Body,
-    http::{header, Request, StatusCode},
     Router,
+    body::Body,
+    http::{Request, StatusCode, header},
 };
 use http_body_util::BodyExt;
 use local_lens_core::AppConfig;
-use local_lens_server::{router, AppState};
-use serde_json::{json, Value};
+use local_lens_server::{AppState, router};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 const ADMIN_TOKEN: &str = "pairing-administrator-token-123456";
@@ -99,9 +99,7 @@ async fn pairing_qr_and_device_revoke_work_end_to_end() -> Result<()> {
     let device_id = claim.1["device"]["id"]
         .as_str()
         .context("device id missing")?;
-    let device_token = claim.1["token"]
-        .as_str()
-        .context("device token missing")?;
+    let device_token = claim.1["token"].as_str().context("device token missing")?;
 
     let devices = call_json(&app, "GET", "/api/v1/devices", Some(ADMIN_TOKEN), None).await?;
     assert_eq!(devices.0, StatusCode::OK);
@@ -151,9 +149,8 @@ async fn call_json(
     let value = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            Value::String(String::from_utf8_lossy(&bytes).to_string())
-        })
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).to_string()))
     };
     Ok((status, value))
 }
