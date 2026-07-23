@@ -256,7 +256,10 @@ async fn apply_media_updates(
     Ok(())
 }
 
-async fn media_path(state: State<'_, RuntimeState>, id: String) -> Result<std::path::PathBuf, String> {
+async fn media_path(
+    state: State<'_, RuntimeState>,
+    id: String,
+) -> Result<std::path::PathBuf, String> {
     let current = state.current().await?;
     let media = current
         .store
