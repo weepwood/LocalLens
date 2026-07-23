@@ -195,14 +195,15 @@ async fn desktop_pairing_qr(
 #[tauri::command]
 async fn desktop_devices(state: State<'_, RuntimeState>) -> Result<Vec<Device>, String> {
     let current = state.current().await?;
-    current.store.devices().await.map_err(|error| error.to_string())
+    current
+        .store
+        .devices()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-async fn desktop_revoke_device(
-    state: State<'_, RuntimeState>,
-    id: String,
-) -> Result<(), String> {
+async fn desktop_revoke_device(state: State<'_, RuntimeState>, id: String) -> Result<(), String> {
     let current = state.current().await?;
     if current
         .store
@@ -219,13 +220,21 @@ async fn desktop_revoke_device(
 #[tauri::command]
 async fn desktop_libraries(state: State<'_, RuntimeState>) -> Result<Vec<LibraryInfo>, String> {
     let current = state.current().await?;
-    current.store.libraries().await.map_err(|error| error.to_string())
+    current
+        .store
+        .libraries()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn desktop_stats(state: State<'_, RuntimeState>) -> Result<MediaStats, String> {
     let current = state.current().await?;
-    current.store.stats().await.map_err(|error| error.to_string())
+    current
+        .store
+        .stats()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
