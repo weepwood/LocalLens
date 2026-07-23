@@ -13,17 +13,17 @@
     "windows": [
       {
         "title": "LocalLens",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 980,
-        "minHeight": 680,
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1040,
+        "minHeight": 720,
         "resizable": true,
         "fullscreen": false,
         "center": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://127.0.0.1:* http://localhost:* data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*"
+      "csp": "default-src 'self'; img-src 'self' asset: http://127.0.0.1:* http://localhost:* data: blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*"
     }
   },
   "bundle": {
