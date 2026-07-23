@@ -45,7 +45,7 @@ jobs:
           test ! -d server
           test ! -d apps/local_lens
           test ! -d apps/local_lens_mobile
-          if git grep -nE 'server/config\.example\.json|apps/local_lens_mobile|apps/local_lens/' -- .; then
+          if git grep -nE 'server/config\.example\.json|apps/local_lens_mobile|apps/local_lens/' -- . ':!.github/workflows/build-release.yml'; then
             echo "发现旧实现路径残留" >&2
             exit 1
           fi
