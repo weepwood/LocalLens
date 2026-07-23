@@ -101,17 +101,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/local_lens_desktop/src-tauri
-      - name: Format Tauri Rust source
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml
-      - name: Upload formatted Tauri source
-        uses: actions/upload-artifact@v7
-        with:
-          name: LocalLens-Tauri-Formatted-Source
-          path: |
-            apps/local_lens_desktop/src-tauri/src/lib.rs
-            apps/local_lens_desktop/src-tauri/src/desktop_media.rs
-          if-no-files-found: error
-          retention-days: 1
       - name: Check Tauri Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Install frontend dependencies
