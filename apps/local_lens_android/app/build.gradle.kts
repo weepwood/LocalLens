@@ -12,8 +12,8 @@ android {
         applicationId = "com.weepwood.locallens"
         minSdk = 26
         targetSdk = 36
-        versionCode = 700
-        versionName = "0.7.0-dev"
+        versionCode = 701
+        versionName = "0.7.1"
     }
 
     buildTypes {
