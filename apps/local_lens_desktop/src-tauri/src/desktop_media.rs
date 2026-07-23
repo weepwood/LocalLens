@@ -256,11 +256,10 @@ async fn apply_media_updates(
     Ok(())
 }
 
-#[tauri::command]
-pub(crate) async fn desktop_reveal_media(
+async fn media_path(
     state: State<'_, RuntimeState>,
     id: String,
-) -> Result<(), String> {
+) -> Result<std::path::PathBuf, String> {
     let current = state.current().await?;
     let media = current
         .store
@@ -268,9 +267,40 @@ pub(crate) async fn desktop_reveal_media(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "媒体不存在".to_string())?;
-    let path = current
+    current
         .media_path(&media)
-        .ok_or_else(|| "媒体路径不安全".to_string())?;
+        .ok_or_else(|| "媒体路径不安全".to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_open_media(
+    state: State<'_, RuntimeState>,
+    id: String,
+) -> Result<(), String> {
+    let path = media_path(state, id).await?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|error| format!("使用 Windows 默认应用打开媒体失败：{error}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        Err("当前功能仅支持 Windows".into())
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn desktop_reveal_media(
+    state: State<'_, RuntimeState>,
+    id: String,
+) -> Result<(), String> {
+    let path = media_path(state, id).await?;
 
     #[cfg(target_os = "windows")]
     {

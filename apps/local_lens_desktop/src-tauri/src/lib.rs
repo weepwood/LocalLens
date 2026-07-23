@@ -447,6 +447,7 @@ pub fn run() {
             desktop_media::desktop_set_album_item,
             desktop_media::desktop_set_media_tag,
             desktop_media::desktop_batch_update,
+            desktop_media::desktop_open_media,
             desktop_media::desktop_reveal_media
         ])
         .run(tauri::generate_context!())
