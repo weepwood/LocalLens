@@ -1,0 +1,23 @@
+{
+  "listen_address": "0.0.0.0:9527",
+  "public_url": "http://192.168.1.20:9527",
+  "server_name": "Home LocalLens",
+  "data_dir": "./data",
+  "api_token": "replace-with-a-long-random-token",
+  "ffmpeg_path": "./bin/ffmpeg.exe",
+  "ffprobe_path": "./bin/ffprobe.exe",
+  "auto_scan": true,
+  "watch_files": true,
+  "thumbnail_workers": 2,
+  "metadata_workers": 2,
+  "pairing_ttl_minutes": 5,
+  "libraries": [
+    {
+      "id": "main-media",
+      "name": "媒体库",
+      "path": "D:\\Media",
+      "recursive": true,
+      "enabled": true
+    }
+  ]
+}
