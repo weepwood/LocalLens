@@ -1,0 +1,38 @@
+name: Desktop frontend check
+
+on:
+  pull_request:
+    paths:
+      - "apps/local_lens_desktop/**"
+      - ".github/workflows/desktop-frontend-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-frontend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: TypeScript and Vite build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/local_lens_desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build desktop frontend
+        run: npm run build
