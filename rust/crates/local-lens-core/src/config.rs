@@ -249,7 +249,10 @@ mod tests {
             "not-a-url",
         ] {
             let mut config = test_config(value);
-            assert!(config.normalize(root.path()).is_err(), "{value} should fail");
+            assert!(
+                config.normalize(root.path()).is_err(),
+                "{value} should fail"
+            );
         }
     }
 }
