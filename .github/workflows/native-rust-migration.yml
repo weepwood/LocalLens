@@ -25,13 +25,12 @@ concurrency:
   group: local-lens-native-rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TARGET_DIR: ${{ runner.temp }}/local-lens-target
-
 jobs:
   rust-core:
     name: Rust core and API
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/local-lens-target
     defaults:
       run:
         working-directory: rust
