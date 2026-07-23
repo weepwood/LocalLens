@@ -1,9 +1,10 @@
 mod collections;
+mod data_safety;
 mod jobs;
 mod media;
 mod schema;
 
-use std::{path::Path, time::Duration};
+use std::{path::{Path, PathBuf}, time::Duration};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -14,11 +15,15 @@ use sqlx::{
 
 use crate::{LibraryConfig, LibraryInfo, MediaStats};
 
+pub use data_safety::{BackupSnapshot, DatabaseHealth};
+
 const RUST_MIGRATION_MARKER: &str = ".rust-backend-migration-v1";
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    pool: SqlitePool,
+    pub(crate) pool: SqlitePool,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) database_path: PathBuf,
 }
 
 impl Store {
@@ -39,7 +44,12 @@ impl Store {
             .connect_with(options)
             .await
             .with_context(|| format!("无法打开 SQLite：{}", path.display()))?;
-        let store = Self { pool };
+        let store = Self {
+            pool,
+            data_dir: data_dir.to_path_buf(),
+            database_path: path,
+        };
+        store.verify_database_integrity().await?;
         store.ensure_compatible_schema().await?;
         store.reset_running_jobs().await?;
         tokio::fs::write(
