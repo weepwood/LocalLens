@@ -4,7 +4,10 @@ mod jobs;
 mod media;
 mod schema;
 
-use std::{path::{Path, PathBuf}, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
