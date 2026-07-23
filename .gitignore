@@ -6,6 +6,17 @@ server/config.json
 *.test
 *.out
 
+# Rust / Tauri
+rust/target/
+apps/local_lens_desktop/src-tauri/target/
+apps/local_lens_desktop/node_modules/
+apps/local_lens_desktop/dist/
+
+# Android / Gradle
+apps/local_lens_android/.gradle/
+apps/local_lens_android/app/build/
+apps/local_lens_android/build/
+
 # Flutter / Dart
 apps/local_lens/.dart_tool/
 apps/local_lens/.flutter-plugins
