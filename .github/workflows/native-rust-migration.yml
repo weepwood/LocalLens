@@ -52,15 +52,8 @@ jobs:
           fi
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
-      - name: Normalize Rust formatting in workspace
-        run: cargo fmt --all
-      - name: Upload formatted Rust sources
-        uses: actions/upload-artifact@v7
-        with:
-          name: LocalLens-Rust-Formatted-Sources
-          path: rust/**/*.rs
-          if-no-files-found: error
-          retention-days: 1
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
       - name: Run Clippy
         shell: bash
         run: |
@@ -108,6 +101,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/local_lens_desktop/src-tauri
+      - name: Normalize Tauri Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Upload formatted Tauri sources
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Tauri-Formatted-Sources
+          path: apps/local_lens_desktop/src-tauri/src/**/*.rs
+          if-no-files-found: error
+          retention-days: 1
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
       - name: Build React frontend
