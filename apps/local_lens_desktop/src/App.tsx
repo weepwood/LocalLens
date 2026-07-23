@@ -87,14 +87,19 @@ const emptyConfig: AppConfig = {
   libraries: [],
 };
 
-function binaryBytes(payload: BinaryPayload) {
-  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
-  if (payload instanceof Uint8Array) return payload;
-  return new Uint8Array(payload);
+function binaryBuffer(payload: BinaryPayload): ArrayBuffer {
+  const source = payload instanceof ArrayBuffer
+    ? new Uint8Array(payload)
+    : payload instanceof Uint8Array
+      ? payload
+      : new Uint8Array(payload);
+  const copy = new Uint8Array(source.byteLength);
+  copy.set(source);
+  return copy.buffer;
 }
 
 async function binaryToDataUrl(payload: BinaryPayload, mimeType: string) {
-  const blob = new Blob([binaryBytes(payload)], { type: mimeType });
+  const blob = new Blob([binaryBuffer(payload)], { type: mimeType });
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
