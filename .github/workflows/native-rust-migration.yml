@@ -54,6 +54,13 @@ jobs:
           ffprobe -version | head -n 1
       - name: Normalize Rust formatting in workspace
         run: cargo fmt --all
+      - name: Upload formatted Rust sources
+        uses: actions/upload-artifact@v7
+        with:
+          name: LocalLens-Rust-Formatted-Sources
+          path: rust/**/*.rs
+          if-no-files-found: error
+          retention-days: 1
       - name: Run Clippy
         shell: bash
         run: |
