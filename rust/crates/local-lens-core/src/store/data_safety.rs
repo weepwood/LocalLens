@@ -96,10 +96,7 @@ impl Store {
             .chars()
             .take(8)
             .collect::<String>();
-        let id = format!(
-            "backup-{}-{suffix}",
-            Utc::now().format("%Y%m%d-%H%M%S")
-        );
+        let id = format!("backup-{}-{suffix}", Utc::now().format("%Y%m%d-%H%M%S"));
         let snapshot_dir = backups_dir.join(&id);
         tokio::fs::create_dir_all(&snapshot_dir).await?;
 
