@@ -666,7 +666,7 @@ export default function App() {
 
         <footer className="lap-statusbar">
           <div><span className={status.running ? 'lap-state-dot online' : 'lap-state-dot'} />{message}</div>
-          <div><span>{config.libraries.length} 个媒体库</span><span>LocalLens v0.7.1</span><span>Lap-style workspace</span></div>
+          <div><span>{config.libraries.length} 个媒体库</span><span>LocalLens v0.8.0</span><span>Lap-style workspace</span></div>
         </footer>
       </main>
     </div>
