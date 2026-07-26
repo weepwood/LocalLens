@@ -2,6 +2,8 @@
 
 LocalLens 是一个本地优先的图片与视频管理系统。媒体原文件保存在用户选择的 Windows 文件夹中，LocalLens 只维护 SQLite 索引、缩略图、元数据、播放记录和虚拟分类。
 
+> AI 或自动化参与开发前必须先阅读 [`AGENTS.md`](AGENTS.md)，遵守媒体原文件、SQLite 迁移、路径访问、设备 Token、转码任务和跨端发布边界。
+
 ## 正式架构
 
 - Windows 桌面端：Tauri 2 + React + TypeScript；
