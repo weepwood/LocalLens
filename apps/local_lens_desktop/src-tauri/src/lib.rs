@@ -1,3 +1,4 @@
+mod data_safety;
 mod desktop_media;
 
 use std::{
@@ -436,6 +437,10 @@ pub fn run() {
             desktop_media_bytes,
             desktop_start_scan,
             desktop_scan_status,
+            data_safety::desktop_database_health,
+            data_safety::desktop_create_backup,
+            data_safety::desktop_list_backups,
+            data_safety::desktop_backup_manifest,
             desktop_media::desktop_folders,
             desktop_media::desktop_albums,
             desktop_media::desktop_create_album,
